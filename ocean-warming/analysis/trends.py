@@ -6,11 +6,11 @@ for monthly SST basin time series from ERDDAP HadISST.
 """
 
 import json
-import math
 from pathlib import Path
 
 import numpy as np
-from scipy import stats as sp_stats
+
+from lib.stats import mann_kendall, ols_trend, sen_slope
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 BASIN_FILE = DATA_DIR / "processed" / "basin_timeseries.json"
@@ -63,79 +63,6 @@ def compute_annual_means(monthly_data, min_months=10):
     }
 
 
-def ols_trend(years, temps):
-    """OLS linear regression. Returns slope (°C/decade), R², p-value, 95% CI."""
-    n = len(years)
-    if n < 3:
-        return {"slope_per_decade": 0, "r_squared": 0, "p_value": 1,
-                "ci_lower": 0, "ci_upper": 0, "std_err_per_decade": 0}
-
-    slope, intercept, r_value, p_value, std_err = sp_stats.linregress(years, temps)
-    t_crit = sp_stats.t.ppf(0.975, n - 2)
-    ci_lower = (slope - t_crit * std_err) * 10
-    ci_upper = (slope + t_crit * std_err) * 10
-
-    return {
-        "slope_per_decade": round(slope * 10, 4),
-        "r_squared": round(r_value ** 2, 4),
-        "p_value": round(float(p_value), 8),
-        "ci_lower": round(ci_lower, 4),
-        "ci_upper": round(ci_upper, 4),
-        "std_err_per_decade": round(std_err * 10, 4),
-    }
-
-
-def mann_kendall(data):
-    """Mann-Kendall monotonic trend test (non-parametric)."""
-    n = len(data)
-    if n < 4:
-        return {"tau": 0, "p_value": 1, "significant": False}
-
-    s = 0
-    for i in range(n - 1):
-        for j in range(i + 1, n):
-            diff = data[j] - data[i]
-            if diff > 0:
-                s += 1
-            elif diff < 0:
-                s -= 1
-
-    tau = s / (n * (n - 1) / 2)
-    var_s = n * (n - 1) * (2 * n + 5) / 18
-
-    if s > 0:
-        z = (s - 1) / math.sqrt(var_s)
-    elif s < 0:
-        z = (s + 1) / math.sqrt(var_s)
-    else:
-        z = 0
-
-    p_value = 2 * (1 - 0.5 * (1 + math.erf(abs(z) / math.sqrt(2))))
-
-    return {
-        "tau": round(tau, 4),
-        "p_value": round(p_value, 8),
-        "significant": p_value < 0.05,
-    }
-
-
-def sen_slope(years, data):
-    """Sen's slope estimator: median of all pairwise slopes. Returns °C/decade."""
-    n = len(data)
-    if n < 2:
-        return 0.0
-
-    slopes = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            if years[j] != years[i]:
-                slopes.append((data[j] - data[i]) / (years[j] - years[i]))
-
-    if not slopes:
-        return 0.0
-    return round(float(np.median(slopes)) * 10, 4)
-
-
 def analyze_basin(basin_name, annual_means):
     """Run trend analysis for one basin across all time periods."""
     results = []
@@ -161,12 +88,12 @@ def analyze_basin(basin_name, annual_means):
             "start_year": int(years[0]),
             "end_year": int(years[-1]),
             "n_years": len(years),
-            "ols_slope_per_decade": ols["slope_per_decade"],
+            "ols_slope_per_decade": ols["slope"],
             "ols_r_squared": ols["r_squared"],
             "ols_p_value": ols["p_value"],
             "ols_ci_lower": ols["ci_lower"],
             "ols_ci_upper": ols["ci_upper"],
-            "ols_std_err": ols["std_err_per_decade"],
+            "ols_std_err": ols["std_err"],
             "mk_tau": mk["tau"],
             "mk_p_value": mk["p_value"],
             "mk_significant": mk["significant"],
