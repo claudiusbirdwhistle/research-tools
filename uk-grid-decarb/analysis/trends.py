@@ -5,13 +5,14 @@ year-over-year changes, and coal elimination timeline.
 """
 
 import json
-import math
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 from scipy import stats as sp_stats
+
+from lib.stats import mann_kendall as _mann_kendall, sen_slope as _sen_slope
 
 
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -52,66 +53,19 @@ def _month_to_quarter(month: int) -> str:
 
 
 def mann_kendall(x):
-    """Mann-Kendall trend test.
-
-    Returns (tau, p_value, trend_direction).
-    """
-    n = len(x)
-    if n < 3:
-        return 0.0, 1.0, "no trend"
-
-    s = 0
-    for k in range(n - 1):
-        for j in range(k + 1, n):
-            diff = x[j] - x[k]
-            if diff > 0:
-                s += 1
-            elif diff < 0:
-                s -= 1
-
-    # Variance of S
-    unique = np.unique(x)
-    if len(unique) == n:
-        var_s = n * (n - 1) * (2 * n + 5) / 18.0
-    else:
-        # Adjust for ties
-        tp = np.zeros(len(unique))
-        for i, u in enumerate(unique):
-            tp[i] = np.sum(x == u)
-        var_s = (n * (n - 1) * (2 * n + 5) - np.sum(tp * (tp - 1) * (2 * tp + 5))) / 18.0
-
-    if var_s == 0:
-        return 0.0, 1.0, "no trend"
-
-    if s > 0:
-        z = (s - 1) / math.sqrt(var_s)
-    elif s < 0:
-        z = (s + 1) / math.sqrt(var_s)
-    else:
-        z = 0.0
-
-    p = 2.0 * (1.0 - sp_stats.norm.cdf(abs(z)))
-    tau = s / (n * (n - 1) / 2.0)
-
+    """Mann-Kendall trend test. Returns (tau, p_value, trend_direction)."""
+    result = _mann_kendall(np.asarray(x))
+    tau, p = result["tau"], result["p_value"]
     if p < 0.05:
         direction = "decreasing" if tau < 0 else "increasing"
     else:
         direction = "no significant trend"
-
     return float(tau), float(p), direction
 
 
 def sens_slope(x, y):
-    """Theil-Sen slope estimator."""
-    n = len(x)
-    slopes = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            if x[j] != x[i]:
-                slopes.append((y[j] - y[i]) / (x[j] - x[i]))
-    if not slopes:
-        return 0.0
-    return float(np.median(slopes))
+    """Theil-Sen slope estimator (per year)."""
+    return _sen_slope(np.asarray(x), np.asarray(y), per_decade=False)
 
 
 def load_national():
