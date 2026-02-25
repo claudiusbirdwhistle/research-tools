@@ -9,7 +9,7 @@ Endpoints (all static JSON, no auth, no rate limits):
 import json
 import httpx
 from pathlib import Path
-from .cache import ResponseCache
+from lib.cache import ResponseCache
 
 BASE_URL = "https://services.swpc.noaa.gov/json"
 
