@@ -40,12 +40,13 @@ def _is_missing(x: Numeric) -> bool:
     return False
 
 
-def fmt(x: Numeric, decimals: int = 3) -> str:
+def fmt(x: Numeric, decimals: int = 3, comma: bool = False) -> str:
     """Format a number with fixed decimal places.
 
     Args:
         x: The number to format. Returns em-dash for None/NaN/inf.
         decimals: Number of decimal places (default 3).
+        comma: If True, add thousands separators (default False).
 
     Returns:
         Formatted string, or '\u2014' if the value is missing.
@@ -57,10 +58,13 @@ def fmt(x: Numeric, decimals: int = 3) -> str:
         '\u2014'
         >>> fmt(42, 1)
         '42.0'
+        >>> fmt(12345.6, 1, comma=True)
+        '12,345.6'
     """
     if _is_missing(x):
         return _DASH
-    return f"{x:.{decimals}f}"
+    sep = "," if comma else ""
+    return f"{x:{sep}.{decimals}f}"
 
 
 def sign(x: Numeric, decimals: int = 3) -> str:
