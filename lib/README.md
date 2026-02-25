@@ -242,11 +242,52 @@ print(table)
 
 Returns `""` for empty rows.
 
+---
+
+### `lib.literature` — Academic literature search and synthesis
+
+Library for searching academic APIs, extracting structured claims from
+abstracts, comparing findings against published literature, and generating
+review sections with citations. See [`lib/literature/README.md`](literature/README.md)
+for full documentation.
+
+```python
+from lib.literature.search import SemanticScholarClient
+from lib.literature import extract_claims, compare_findings, generate_review_section
+
+# Search → extract → compare → synthesize
+with SemanticScholarClient() as client:
+    result = client.search("sea level rise rate", limit=10)
+
+claims = []
+for paper in result.papers:
+    claims.extend(extract_claims(paper))
+
+matches = compare_findings("sea level rose 3.4 mm/yr", claims, top_n=5)
+print(generate_review_section("sea level rose 3.4 mm/yr", matches))
+```
+
+**Search clients:** OpenAlex, Semantic Scholar, CrossRef, arXiv — all with
+caching, retries, and rate limiting via `BaseAPIClient`.
+
+**Extraction:** Regex-based claim extraction (no LLM dependency). Finds
+numerical values with units, percentages, statistical results, and
+directional statements.
+
+**Comparison:** Scores literature claims against local findings using topic
+relevance, value proximity, and direction agreement. Classifies as
+"agrees", "disagrees", "related", or "unclear".
+
+**Output:** Markdown review sections with inline citations, BibTeX
+references, JSON summaries.
+
+---
+
 ## Running Tests
 
 ```bash
 # From repository root (/tools/)
-make test         # run all 336 tests
+make test         # run all 466 tests
 make lint         # check style with ruff
 make check        # lint + test
 ```
@@ -263,6 +304,12 @@ lib/
 ├── formatting.py     # Number formatting helpers
 ├── stats.py          # Statistical methods
 ├── tables.py         # Markdown table generation
+├── literature/       # Academic literature search & synthesis
+│   ├── models.py     # Paper, Claim, SearchResult
+│   ├── search/       # OpenAlex, Semantic Scholar, CrossRef, arXiv
+│   ├── extract.py    # Heuristic claim extraction
+│   ├── compare.py    # Finding-vs-literature comparison
+│   └── report.py     # Markdown + BibTeX output
 └── README.md         # This file
 ```
 
