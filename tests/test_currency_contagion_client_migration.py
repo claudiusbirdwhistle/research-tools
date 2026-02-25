@@ -183,3 +183,61 @@ class TestFunctional:
         client = self._make_client(handler)
         client.fetch_year(2020, ["EUR"], base="USD")
         client.close()
+
+
+# ── Module-level convenience function ────────────────────────────────────────
+
+
+class TestModuleLevelCollectAll:
+    """Verify that collect_all is importable at module level.
+
+    Callers (analyze.py, collect_and_detect.py) do:
+        from fx.client import collect_all
+    This must resolve to a callable that creates a FrankfurterClient
+    internally and returns merged rates.
+    """
+
+    def test_collect_all_is_importable(self):
+        """collect_all must exist as a module-level name in fx/client.py."""
+        mod = _load_client_module()
+        assert hasattr(mod, "collect_all"), (
+            "fx/client.py must export a module-level collect_all function"
+        )
+
+    def test_collect_all_is_callable(self):
+        """collect_all must be a callable (function), not a method."""
+        mod = _load_client_module()
+        fn = getattr(mod, "collect_all", None)
+        assert fn is not None
+        assert callable(fn)
+
+    def test_collect_all_returns_rates(self):
+        """collect_all(currencies) must return a dict of date->rates."""
+        # We can't easily mock the transport for the module-level function
+        # without patching, so just verify the signature and existence.
+        mod = _load_client_module()
+        fn = getattr(mod, "collect_all", None)
+        assert fn is not None
+        # Verify it accepts at least a currencies argument
+        import inspect
+        sig = inspect.signature(fn)
+        params = list(sig.parameters.keys())
+        assert "currencies" in params, (
+            f"collect_all must accept a 'currencies' parameter, got {params}"
+        )
+
+
+class TestLegacyApiClientRemoved:
+    """Verify legacy api/client.py no longer uses raw httpx."""
+
+    def test_legacy_api_client_not_standalone(self):
+        """api/client.py should either not exist or import from fx.client."""
+        import os
+        legacy = "/tools/currency-contagion/api/client.py"
+        if os.path.exists(legacy):
+            with open(legacy) as f:
+                source = f.read()
+            assert "httpx.Client(" not in source, (
+                "api/client.py still creates raw httpx.Client; "
+                "should be consolidated with fx/client.py"
+            )

@@ -112,23 +112,23 @@ class TestUkGridFmt:
         assert result in ("0.0", "+0.0")
 
 
-class TestClimateTrendsFmt:
-    """Climate-trends fmt() is already a thin wrapper around lib.formatting.sign."""
+class TestClimateTrendsNoLocalFmt:
+    """Climate-trends should use lib.formatting.sign directly, not a local fmt() wrapper."""
 
-    def test_fmt_positive(self):
+    def test_no_local_fmt_definition(self):
+        """The generator should not define its own fmt() function."""
+        import inspect
         from importlib import import_module
         gen = import_module("climate-trends.report.generator")
-        result = gen.fmt(0.25)
-        assert result == "+0.25"
+        source = inspect.getsource(gen)
+        assert "def fmt(" not in source, "Local fmt() wrapper should be removed"
 
-    def test_fmt_negative(self):
+    def test_sign_imported_directly(self):
+        """sign should be importable from the generator and produce correct output."""
         from importlib import import_module
         gen = import_module("climate-trends.report.generator")
-        result = gen.fmt(-0.25)
-        assert result == "-0.25"
-
-    def test_fmt_with_decimals(self):
-        from importlib import import_module
-        gen = import_module("climate-trends.report.generator")
-        result = gen.fmt(1.234, 1)
-        assert result == "+1.2"
+        assert hasattr(gen, "sign"), "sign should be available in generator module"
+        # Verify it produces the expected outputs (same as old fmt() with decimals=2)
+        assert gen.sign(0.25, 2) == "+0.25"
+        assert gen.sign(-0.25, 2) == "-0.25"
+        assert gen.sign(1.234, 1) == "+1.2"

@@ -27,11 +27,6 @@ def load_json(path: Path) -> dict | None:
     return None
 
 
-def fmt(val, decimals=2):
-    """Signed number format — delegates to lib.formatting.sign with tool-specific 2-decimal default."""
-    return sign(val, decimals)
-
-
 def generate_report(output_path: Path | None = None) -> str:
     """Generate the full climate trends report.
 
@@ -127,12 +122,12 @@ def _exec_summary(trends, extremes, volatility, projections, n_cities, is_prelim
         findings.append(
             f"**Universal warming**: All {n_cities} cities analyzed show statistically significant warming "
             f"trends over 1940–2024 ({pct_sig:.0f}% at p<0.05). Mean warming rate: "
-            f"{fmt(rate_full)} °C/decade."
+            f"{sign(rate_full, 2)} °C/decade."
         )
         findings.append(
-            f"**Accelerating**: Warming has accelerated sharply — from {fmt(rate_full)} °C/decade "
-            f"(1940–2024 average) to {fmt(rate_post80)} °C/decade since 1980 and "
-            f"{fmt(rate_post00)} °C/decade since 2000."
+            f"**Accelerating**: Warming has accelerated sharply — from {sign(rate_full, 2)} °C/decade "
+            f"(1940–2024 average) to {sign(rate_post80, 2)} °C/decade since 1980 and "
+            f"{sign(rate_post00, 2)} °C/decade since 2000."
         )
 
         # Find fastest city details from ranking
@@ -140,8 +135,8 @@ def _exec_summary(trends, extremes, volatility, projections, n_cities, is_prelim
         if ranking:
             top = ranking[0]
             findings.append(
-                f"**Fastest warming**: {top['city']} at {fmt(top['warming_rate'])} °C/decade "
-                f"({fmt(top['total_change'], 1)} °C total change since 1940)."
+                f"**Fastest warming**: {top['city']} at {sign(top['warming_rate'], 2)} °C/decade "
+                f"({sign(top['total_change'], 1)} °C total change since 1940)."
             )
 
     # Extreme weather
@@ -152,12 +147,12 @@ def _exec_summary(trends, extremes, volatility, projections, n_cities, is_prelim
             findings.append(
                 f"**Extreme heat increasing**: {heat_p95.get('pct_significant', 0):.0f}% of cities show "
                 f"significant increases in extreme heat days (95th percentile threshold). "
-                f"Mean trend: {fmt(heat_p95.get('mean_trend', 0), 1)} days/decade."
+                f"Mean trend: {sign(heat_p95.get('mean_trend', 0), 1)} days/decade."
             )
         if cold_0:
             findings.append(
                 f"**Frost days disappearing**: {cold_0.get('pct_significant', 0):.0f}% of cities show "
-                f"significant loss of frost days. Mean trend: {fmt(cold_0.get('mean_trend', 0), 1)} days/decade."
+                f"significant loss of frost days. Mean trend: {sign(cold_0.get('mean_trend', 0), 1)} days/decade."
             )
 
     # Volatility
@@ -165,7 +160,7 @@ def _exec_summary(trends, extremes, volatility, projections, n_cities, is_prelim
         whi = vol_agg.get("mean_whiplash_index", 0)
         direction = "decreasing" if whi < 0 else "increasing"
         findings.append(
-            f"**Volatility {direction}**: Mean climate whiplash index is {fmt(whi, 2)}, indicating "
+            f"**Volatility {direction}**: Mean climate whiplash index is {sign(whi, 2)}, indicating "
             f"that day-to-day weather variability is {direction} overall. "
             f"The \"more extreme weather\" narrative is nuanced — extremes are shifting due to "
             f"mean warming, but day-to-day chaos is not increasing."
@@ -195,9 +190,9 @@ def _section_trends(trends: dict, n_cities: int) -> str:
         sig = stars(r["p_value"])
         lines.append(
             f"| {r['rank']} | {r['city']} | {r['climate']} | "
-            f"{fmt(r['warming_rate'])} | {fmt(r['sen_slope'])} | "
+            f"{sign(r['warming_rate'], 2)} | {sign(r['sen_slope'], 2)} | "
             f"{r['r_squared']:.3f} | {p_str(r['p_value'])}{sig} | "
-            f"{fmt(r['total_change'], 1)} |"
+            f"{sign(r['total_change'], 1)} |"
         )
     lines.append("")
 
@@ -212,9 +207,9 @@ def _section_trends(trends: dict, n_cities: int) -> str:
     lines.append("|------|-------------------|--------------------|--------------------|-------------|")
     for a in accel:
         lines.append(
-            f"| {a['city']} | {fmt(a['pre_1980_rate'])} | "
-            f"{fmt(a['post_1980_rate'])} | {fmt(a['post_2000_rate'])} | "
-            f"{fmt(a['acceleration'])} |"
+            f"| {a['city']} | {sign(a['pre_1980_rate'], 2)} | "
+            f"{sign(a['post_1980_rate'], 2)} | {sign(a['post_2000_rate'], 2)} | "
+            f"{sign(a['acceleration'], 2)} |"
         )
     lines.append("")
 
@@ -251,9 +246,9 @@ def _section_trends(trends: dict, n_cities: int) -> str:
     if fastest_post2000:
         lines.append(
             f"**Continuing acceleration**: The fastest post-2000 warming is in "
-            f"{fastest_post2000['city']} at {fmt(fastest_post2000['post_2000_rate'])} °C/decade — "
+            f"{fastest_post2000['city']} at {sign(fastest_post2000['post_2000_rate'], 2)} °C/decade — "
             f"more than double the long-term rate. Since 2000, the average warming across "
-            f"all {n_cities} cities is {fmt(agg.get('mean_warming_post2000', 0))} °C/decade.\n"
+            f"all {n_cities} cities is {sign(agg.get('mean_warming_post2000', 0), 2)} °C/decade.\n"
         )
 
     # Continental averages
@@ -263,7 +258,7 @@ def _section_trends(trends: dict, n_cities: int) -> str:
         lines.append("| Continent | Cities | Mean Warming (°C/dec) |")
         lines.append("|-----------|--------|----------------------|")
         for cont, data in sorted(by_cont.items()):
-            lines.append(f"| {cont} | {data['n_cities']} | {fmt(data['mean_rate'])} |")
+            lines.append(f"| {cont} | {data['n_cities']} | {sign(data['mean_rate'], 2)} |")
         lines.append("")
 
     return "\n".join(lines)
@@ -293,7 +288,7 @@ def _section_seasonal(seasonal: dict) -> str:
             median = info.get("median_rate")
             if mean is not None:
                 lines.append(
-                    f"| {label} ({s}) | {fmt(mean)} | {fmt(median)} |"
+                    f"| {label} ({s}) | {sign(mean, 2)} | {sign(median, 2)} |"
                 )
         lines.append("")
 
@@ -306,8 +301,8 @@ def _section_seasonal(seasonal: dict) -> str:
         slow_rate = global_rates.get(slowest, {}).get("mean_rate", 0)
         ratio = fast_rate / slow_rate if slow_rate > 0 else 0
         lines.append(
-            f"**{fast_label} warms fastest** ({fmt(fast_rate)} °C/decade) — "
-            f"{ratio:.1f}× faster than {slow_label.lower()} ({fmt(slow_rate)} °C/decade).\n"
+            f"**{fast_label} warms fastest** ({sign(fast_rate, 2)} °C/decade) — "
+            f"{ratio:.1f}× faster than {slow_label.lower()} ({sign(slow_rate, 2)} °C/decade).\n"
         )
 
     # --- Per-city fastest season ranking ---
@@ -320,7 +315,7 @@ def _section_seasonal(seasonal: dict) -> str:
         for r in by_fastest:
             lines.append(
                 f"| {r['rank']} | {r['city']} | {r['fastest_season']} | "
-                f"{fmt(r['rate'])} |"
+                f"{sign(r['rate'], 2)} |"
             )
         lines.append("")
 
@@ -336,8 +331,8 @@ def _section_seasonal(seasonal: dict) -> str:
         lines.append("|------|---------|------|---------|------|-----------|")
         for r in by_asymmetry[:10]:
             lines.append(
-                f"| {r['city']} | {r['fastest']} | {fmt(r['fastest_rate'])} | "
-                f"{r['slowest']} | {fmt(r['slowest_rate'])} | {r['asymmetry']:.1f}× |"
+                f"| {r['city']} | {r['fastest']} | {sign(r['fastest_rate'], 2)} | "
+                f"{r['slowest']} | {sign(r['slowest_rate'], 2)} | {r['asymmetry']:.1f}× |"
             )
         lines.append("")
 
@@ -367,13 +362,13 @@ def _section_seasonal(seasonal: dict) -> str:
     sw_diff = seasonal.get("mean_sw_diff_trend", 0)
     if sw_diff < -0.01:
         lines.append(
-            f"**Seasonal contrast narrowing** ({fmt(sw_diff, 3)} °C/decade): The summer-winter "
+            f"**Seasonal contrast narrowing** ({sign(sw_diff, 3)} °C/decade): The summer-winter "
             f"temperature gap is shrinking because winters are warming faster than summers. "
             f"This reduces the annual temperature amplitude — a less seasonal climate.\n"
         )
     elif sw_diff > 0.01:
         lines.append(
-            f"**Seasonal contrast widening** ({fmt(sw_diff, 3)} °C/decade): The summer-winter "
+            f"**Seasonal contrast widening** ({sign(sw_diff, 3)} °C/decade): The summer-winter "
             f"temperature gap is growing, meaning summers are warming faster than winters.\n"
         )
 
@@ -434,7 +429,7 @@ def _section_extremes(extremes: dict, n_cities: int) -> str:
             direction = "mixed"
         lines.append(
             f"| {label} | {s['pct_significant']:.0f}% | {direction} | "
-            f"{fmt(s['mean_trend'], 2)} |"
+            f"{sign(s['mean_trend'], 2)} |"
         )
     lines.append("")
 
@@ -451,9 +446,9 @@ def _section_extremes(extremes: dict, n_cities: int) -> str:
             sig_str = "Yes" if r.get("trend_significant") else "No"
             lines.append(
                 f"| {r['city']} | {r['climate']} | "
-                f"{fmt(r['trend_per_decade'], 2)} | {sig_str} | "
+                f"{sign(r['trend_per_decade'], 2)} | {sig_str} | "
                 f"{r['mean_early']:.1f} | {r['mean_late']:.1f} | "
-                f"{fmt(r['change'], 1)} |"
+                f"{sign(r['change'], 1)} |"
             )
         lines.append("")
 
@@ -472,9 +467,9 @@ def _section_extremes(extremes: dict, n_cities: int) -> str:
                 sig_str = "Yes" if r.get("trend_significant") else "No"
                 lines.append(
                     f"| {r['city']} | {r['climate']} | "
-                    f"{fmt(r['trend_per_decade'], 2)} | {sig_str} | "
+                    f"{sign(r['trend_per_decade'], 2)} | {sig_str} | "
                     f"{r['mean_early']:.1f} | {r['mean_late']:.1f} | "
-                    f"{fmt(r['change'], 1)} |"
+                    f"{sign(r['change'], 1)} |"
                 )
             lines.append("")
 
@@ -514,7 +509,7 @@ def _section_extremes(extremes: dict, n_cities: int) -> str:
         lines.append(
             f"**Heavy rain slightly increasing**: {precip_20.get('pct_significant', 0):.0f}% of cities "
             f"show significant increases in days with >20mm precipitation. The trend is modest "
-            f"({fmt(precip_20.get('mean_trend', 0), 2)} days/decade) and many trends are not "
+            f"({sign(precip_20.get('mean_trend', 0), 2)} days/decade) and many trends are not "
             f"statistically significant.\n"
         )
 
@@ -549,10 +544,10 @@ def _section_volatility(volatility: dict, n_cities: int) -> str:
         pct = agg.get(pct_key, 0)
         trend = agg.get(trend_key, 0)
         direction = "↑ Increasing" if trend > 0 else "↓ Decreasing" if trend < 0 else "→ Stable"
-        lines.append(f"| {label} | {pct:.0f}% | {fmt(trend, 4)} | {direction} |")
+        lines.append(f"| {label} | {pct:.0f}% | {sign(trend, 4)} | {direction} |")
 
     whi = agg.get("mean_whiplash_index", 0)
-    lines.append(f"\n**Composite whiplash index**: {fmt(whi, 2)} (negative = decreasing volatility)\n")
+    lines.append(f"\n**Composite whiplash index**: {sign(whi, 2)} (negative = decreasing volatility)\n")
 
     # --- City rankings ---
     lines.append("### Whiplash Index by City\n")
@@ -563,8 +558,8 @@ def _section_volatility(volatility: dict, n_cities: int) -> str:
         for i, r in enumerate(whi_rank, 1):
             lines.append(
                 f"| {i} | {r['city']} | {r['climate']} | "
-                f"{fmt(r['whiplash_index'], 3)} | "
-                f"{fmt(r['swing_trend'], 4)} | {fmt(r['dtr_trend'], 3)} |"
+                f"{sign(r['whiplash_index'], 3)} | "
+                f"{sign(r['swing_trend'], 4)} | {sign(r['dtr_trend'], 3)} |"
             )
         lines.append("")
 
@@ -573,7 +568,7 @@ def _section_volatility(volatility: dict, n_cities: int) -> str:
 
     if whi < 0:
         lines.append(
-            f"**Decreasing volatility overall**: The mean whiplash index of {fmt(whi, 2)} "
+            f"**Decreasing volatility overall**: The mean whiplash index of {sign(whi, 2)} "
             f"indicates that weather variability is *decreasing*, not increasing. "
             f"This is counterintuitive — the popular narrative emphasizes \"more extreme weather\" — "
             f"but the data shows that while *thresholds* are crossed more often (Section 2), "
@@ -584,7 +579,7 @@ def _section_volatility(volatility: dict, n_cities: int) -> str:
     dtr_trend = agg.get("dtr_mean_trend", 0)
     if dtr_trend > 0:
         lines.append(
-            f"**DTR slightly widening ({fmt(dtr_trend, 3)} °C/decade)**: "
+            f"**DTR slightly widening ({sign(dtr_trend, 3)} °C/decade)**: "
             f"The diurnal temperature range is increasing slightly, meaning the gap between "
             f"daily highs and lows is growing. This contrasts with the global average trend "
             f"of DTR shrinkage (nights warming faster than days). The pattern may be "
@@ -592,7 +587,7 @@ def _section_volatility(volatility: dict, n_cities: int) -> str:
         )
     elif dtr_trend < 0:
         lines.append(
-            f"**DTR shrinking ({fmt(dtr_trend, 3)} °C/decade)**: "
+            f"**DTR shrinking ({sign(dtr_trend, 3)} °C/decade)**: "
             f"Nights are warming faster than days, narrowing the diurnal temperature range. "
             f"This is consistent with the global trend.\n"
         )
@@ -603,7 +598,7 @@ def _section_volatility(volatility: dict, n_cities: int) -> str:
         if most_volatile["whiplash_index"] > 0:
             lines.append(
                 f"**Most volatile city**: {most_volatile['city']} is the only city with a positive "
-                f"whiplash index ({fmt(most_volatile['whiplash_index'], 3)}), indicating genuinely "
+                f"whiplash index ({sign(most_volatile['whiplash_index'], 3)}), indicating genuinely "
                 f"increasing weather variability.\n"
             )
 
@@ -636,10 +631,10 @@ def _section_projections(projections: dict) -> str:
         for model, stats in model_perf.items():
             label = stats.get("label", model)
             lines.append(
-                f"| {label} | {fmt(stats.get('mean_bias', 0))} | "
+                f"| {label} | {sign(stats.get('mean_bias', 0), 2)} | "
                 f"{stats.get('mean_rmse', 0):.3f} | "
                 f"{stats.get('mean_mae', 0):.3f} | "
-                f"{fmt(stats.get('mean_trend_error', 0), 3)} |"
+                f"{sign(stats.get('mean_trend_error', 0), 3)} |"
             )
         lines.append("")
 
@@ -657,9 +652,9 @@ def _section_projections(projections: dict) -> str:
             spread = c.get("ensemble_spread", 0)
             lines.append(
                 f"| {c['city']} | {c.get('continent', '')} | {c.get('climate', '')} | "
-                f"{fmt(w2050) if w2050 is not None else '—'} | "
+                f"{sign(w2050, 2) if w2050 is not None else '—'} | "
                 f"±{spread:.2f} | "
-                f"{fmt(wnear) if wnear is not None else '—'} | "
+                f"{sign(wnear, 2) if wnear is not None else '—'} | "
                 f"{c.get('best_model', '—')} |"
             )
         lines.append("")
@@ -671,7 +666,7 @@ def _section_projections(projections: dict) -> str:
         lines.append("| Continent | Mean Projected Warming (°C) |")
         lines.append("|-----------|---------------------------|")
         for cont, w in sorted(cont_warming.items(), key=lambda x: -x[1]):
-            lines.append(f"| {cont} | {fmt(w)} |")
+            lines.append(f"| {cont} | {sign(w, 2)} |")
         lines.append("")
 
     # Best model by climate zone
