@@ -9,6 +9,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from lib.formatting import sign, p_str, stars
+
 
 ANALYSIS_DIR = Path(__file__).parent.parent / "data" / "analysis"
 COLLECTION_STATE = Path(__file__).parent.parent / "data" / "historical" / "collection_state.json"
@@ -25,33 +27,9 @@ def load_json(path: Path) -> dict | None:
     return None
 
 
-def fmt(val: float, decimals: int = 2) -> str:
-    """Format a float with sign prefix."""
-    sign = "+" if val > 0 else ""
-    return f"{sign}{val:.{decimals}f}"
-
-
-def fmt_p(p: float) -> str:
-    """Format a p-value."""
-    if p < 0.001:
-        return "<0.001"
-    elif p < 0.01:
-        return f"{p:.3f}"
-    elif p < 0.05:
-        return f"{p:.2f}"
-    else:
-        return f"{p:.2f}"
-
-
-def sig_marker(p: float) -> str:
-    """Return significance marker."""
-    if p < 0.001:
-        return "***"
-    elif p < 0.01:
-        return "**"
-    elif p < 0.05:
-        return "*"
-    return ""
+def fmt(val, decimals=2):
+    """Signed number format — delegates to lib.formatting.sign with tool-specific 2-decimal default."""
+    return sign(val, decimals)
 
 
 def generate_report(output_path: Path | None = None) -> str:
@@ -214,11 +192,11 @@ def _section_trends(trends: dict, n_cities: int) -> str:
     lines.append("| Rank | City | Climate | Warming (°C/dec) | Sen's Slope | R² | p-value | Total Δ (°C) |")
     lines.append("|------|------|---------|-----------------|-------------|-----|---------|-------------|")
     for r in ranking:
-        sig = sig_marker(r["p_value"])
+        sig = stars(r["p_value"])
         lines.append(
             f"| {r['rank']} | {r['city']} | {r['climate']} | "
             f"{fmt(r['warming_rate'])} | {fmt(r['sen_slope'])} | "
-            f"{r['r_squared']:.3f} | {fmt_p(r['p_value'])}{sig} | "
+            f"{r['r_squared']:.3f} | {p_str(r['p_value'])}{sig} | "
             f"{fmt(r['total_change'], 1)} |"
         )
     lines.append("")
