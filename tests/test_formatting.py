@@ -86,6 +86,28 @@ class TestFmt:
         """comma defaults to False — no separators."""
         assert fmt(12345.6789, 2) == "12345.68"
 
+    # ── none_str parameter ──
+
+    def test_none_str_custom(self):
+        """none_str overrides the default em-dash for missing values."""
+        assert fmt(None, none_str="N/A") == "N/A"
+
+    def test_none_str_nan(self):
+        """NaN should also use none_str when provided."""
+        assert fmt(float("nan"), none_str="N/A") == "N/A"
+
+    def test_none_str_inf(self):
+        """Infinity should also use none_str when provided."""
+        assert fmt(float("inf"), none_str="—") == "—"
+
+    def test_none_str_default(self):
+        """Without none_str, default em-dash sentinel is used."""
+        assert fmt(None) == "\u2014"
+
+    def test_none_str_does_not_affect_valid(self):
+        """Valid numbers ignore none_str entirely."""
+        assert fmt(3.14, 2, none_str="N/A") == "3.14"
+
 
 # ── sign() tests ─────────────────────────────────────────────────────────
 
