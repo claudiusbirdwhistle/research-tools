@@ -157,6 +157,7 @@ def ols_trend(
             p_value: Two-tailed p-value for the slope.
             ci_lower: Lower bound of 95% confidence interval.
             ci_upper: Upper bound of 95% confidence interval.
+            std_err: Standard error of the slope estimate.
 
     Examples:
         >>> ols_trend(np.arange(2000, 2010), np.arange(1, 11.0))
@@ -166,7 +167,7 @@ def ols_trend(
     values = np.asarray(values, dtype=float)
     n = len(years)
     if n < 3:
-        return {"slope": 0, "r_squared": 0, "p_value": 1, "ci_lower": 0, "ci_upper": 0}
+        return {"slope": 0, "r_squared": 0, "p_value": 1, "ci_lower": 0, "ci_upper": 0, "std_err": 0}
 
     slope, intercept, r_value, p_value, std_err = sp_stats.linregress(years, values)
 
@@ -183,6 +184,7 @@ def ols_trend(
         "p_value": round(float(p_value), 8),
         "ci_lower": round(ci_lower, 6),
         "ci_upper": round(ci_upper, 6),
+        "std_err": round(std_err * scale, 6),
     }
 
 

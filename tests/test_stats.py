@@ -147,13 +147,24 @@ class TestOLSTrend:
     """OLS linear regression with confidence intervals."""
 
     def test_returns_dict_keys(self):
-        """Result should have standard keys."""
+        """Result should have standard keys including std_err."""
         result = ols_trend(MONOTONIC_YEARS, MONOTONIC_VALUES)
         assert "slope" in result
         assert "r_squared" in result
         assert "p_value" in result
         assert "ci_lower" in result
         assert "ci_upper" in result
+        assert "std_err" in result
+
+    def test_std_err_positive_for_noisy_data(self):
+        """Standard error should be positive for noisy data."""
+        result = ols_trend(NOISY_YEARS, NOISY_VALUES, per_decade=True)
+        assert result["std_err"] > 0
+
+    def test_std_err_near_zero_for_perfect_data(self):
+        """Standard error should be near zero for perfect linear data."""
+        result = ols_trend(MONOTONIC_YEARS, MONOTONIC_VALUES)
+        assert result["std_err"] == pytest.approx(0.0, abs=0.001)
 
     def test_perfect_linear_slope(self):
         """Perfect linear data: slope should be 10.0/decade."""
