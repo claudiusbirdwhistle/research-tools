@@ -6,6 +6,8 @@ from pathlib import Path
 from scipy import stats
 from typing import Dict, List
 
+from lib.stats import mann_kendall as _lib_mk
+
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 OUT_DIR = Path(__file__).parent.parent / "data" / "analysis"
 
@@ -71,29 +73,10 @@ def compute_drought_metrics(by_year: Dict[int, np.ndarray]) -> Dict[int, Dict]:
     return results
 
 
-def mann_kendall_simple(y: np.ndarray):
-    """Mann-Kendall trend test."""
-    n = len(y)
-    if n < 10:
-        return {"z": 0, "p": 1.0, "significant": False}
-    s = 0
-    for i in range(n - 1):
-        for j in range(i + 1, n):
-            diff = y[j] - y[i]
-            if diff > 0:
-                s += 1
-            elif diff < 0:
-                s -= 1
-
-    unique, counts = np.unique(y, return_counts=True)
-    tp = sum(c * (c - 1) * (2 * c + 5) for c in counts if c > 1)
-    var_s = (n * (n - 1) * (2 * n + 5) - tp) / 18.0
-    if var_s <= 0:
-        return {"z": 0, "p": 1.0, "significant": False}
-
-    z = (s - 1) / np.sqrt(var_s) if s > 0 else (s + 1) / np.sqrt(var_s) if s < 0 else 0
-    p = 2 * (1 - stats.norm.cdf(abs(z)))
-    return {"z": float(z), "p": float(p), "significant": p < 0.05}
+def __mann_kendall_simple(y: np.ndarray):
+    """Mann-Kendall trend test (adapter for lib.stats.mann_kendall)."""
+    result = _lib_mk(np.asarray(y))
+    return {"z": result["z"], "p": result["p_value"], "significant": result["significant"]}
 
 
 def analyze_drought_trends(years: np.ndarray, metrics: Dict[int, Dict]) -> Dict:
@@ -104,7 +87,7 @@ def analyze_drought_trends(years: np.ndarray, metrics: Dict[int, Dict]) -> Dict:
         vals = np.array([metrics[y][metric_name] for y in years])
 
         slope, intercept, r_value, p_value, std_err = stats.linregress(years, vals)
-        mk = mann_kendall_simple(vals)
+        mk = _mann_kendall_simple(vals)
 
         mean_val = float(np.mean(vals))
         pct_per_decade = (slope * 10 / mean_val * 100) if mean_val > 0 else 0
