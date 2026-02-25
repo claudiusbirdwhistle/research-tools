@@ -434,7 +434,7 @@ def run(client: OpenAlexClient):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    from openalex.cache import ResponseCache
+    from lib.cache import ResponseCache
 
     cache = ResponseCache(str(DATA_DIR / "cache.db"))
     client = OpenAlexClient(cache=cache)

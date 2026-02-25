@@ -253,7 +253,7 @@ def run(client: OpenAlexClient | None = None) -> list[FieldMetrics]:
     """Main entry point: collect data, compute metrics, save results."""
     close_client = False
     if client is None:
-        from openalex.cache import ResponseCache
+        from lib.cache import ResponseCache
         cache = ResponseCache()
         client = OpenAlexClient(cache=cache)
         close_client = True

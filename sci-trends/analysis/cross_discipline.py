@@ -365,7 +365,7 @@ if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.INFO)
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from openalex.cache import ResponseCache
+    from lib.cache import ResponseCache
 
     cache = ResponseCache(str(DATA_DIR / "cache.db"))
     client = OpenAlexClient(cache=cache)

@@ -23,7 +23,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from .cache import ResponseCache
+from lib.cache import ResponseCache
 from .models import GroupResult, Field, Topic, WorkSummary
 
 logger = logging.getLogger(__name__)

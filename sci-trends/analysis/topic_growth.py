@@ -373,7 +373,7 @@ def run(client: OpenAlexClient | None = None) -> list[TopicGrowth]:
     """Main entry point: collect topics, compute growth, save results."""
     close_client = False
     if client is None:
-        from openalex.cache import ResponseCache
+        from lib.cache import ResponseCache
         cache = ResponseCache()
         client = OpenAlexClient(cache=cache)
         close_client = True
