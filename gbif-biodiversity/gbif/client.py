@@ -1,59 +1,94 @@
-"""GBIF API client with faceted query support."""
-import httpx
-import json
-import time
-import hashlib
-from pathlib import Path
+"""GBIF API client with faceted query support.
+
+Uses BaseAPIClient for HTTP handling, caching, and retry logic.
+
+Endpoint:
+  - GBIF API v1: https://api.gbif.org/v1
+"""
+
+from lib.api_client import BaseAPIClient
+from lib.cache import ResponseCache
 
 BASE_URL = "https://api.gbif.org/v1"
-RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
-def _cache_path(url: str, params: dict) -> Path:
-    key = hashlib.md5(f"{url}|{json.dumps(params, sort_keys=True)}".encode()).hexdigest()
-    return RAW_DIR / f"{key}.json"
 
-def query(endpoint: str, params: dict = None, cache: bool = True, delay: float = 0.3) -> dict:
-    """Query GBIF API with optional caching."""
-    url = f"{BASE_URL}/{endpoint.lstrip('/')}"
-    params = params or {}
+class GBIFClient(BaseAPIClient):
+    """Client for the GBIF (Global Biodiversity Information Facility) API.
 
-    cp = _cache_path(url, params)
-    if cache and cp.exists():
-        return json.loads(cp.read_text())
+    Inherits HTTP handling, caching, and retry from BaseAPIClient.
 
-    with httpx.Client(timeout=30) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+    Args:
+        cache_path: Path to SQLite cache database. If None, uses default.
+        request_delay: Minimum seconds between requests (default 0.3).
+        **kwargs: Additional arguments passed to BaseAPIClient (e.g.
+            transport for testing).
+    """
 
-    cp.parent.mkdir(parents=True, exist_ok=True)
-    cp.write_text(json.dumps(data))
+    def __init__(self, cache_path=None, request_delay=0.3, **kwargs):
+        cache = ResponseCache(db_path=cache_path)
+        super().__init__(
+            base_url=BASE_URL,
+            cache=cache,
+            rate_limit_delay=request_delay,
+            user_agent="GBIFBiodiversity/1.0 (autonomous-agent@research.local)",
+            **kwargs,
+        )
 
-    if delay > 0:
-        time.sleep(delay)
-    return data
+    def query(self, endpoint, params=None, use_cache=True):
+        """Query a GBIF API endpoint.
 
-def facet_query(facet: str, facet_limit: int = 300, filters: dict = None, delay: float = 0.3) -> list:
-    """Run a faceted occurrence search. Returns list of (name, count) tuples."""
-    params = {"limit": 0, "facet": facet, "facetLimit": facet_limit}
-    if filters:
-        params.update(filters)
+        Args:
+            endpoint: API endpoint path (e.g. 'occurrence/search').
+            params: Optional query parameters.
+            use_cache: If True, use cache for this request.
 
-    data = query("occurrence/search", params, delay=delay)
+        Returns:
+            Parsed JSON response as dict.
+        """
+        params = params or {}
+        return self.get_json(f"/{endpoint.lstrip('/')}", params=params,
+                             use_cache=use_cache)
 
-    # Extract facet results
-    facets = data.get("facets", [])
-    if not facets:
-        return []
+    def facet_query(self, facet, facet_limit=300, filters=None):
+        """Run a faceted occurrence search.
 
-    return [(item["name"], item["count"]) for item in facets[0].get("counts", [])]
+        Args:
+            facet: Facet field name (e.g. 'COUNTRY').
+            facet_limit: Maximum number of facet values (default 300).
+            filters: Additional filter parameters.
 
-def get_nodes(limit: int = 300) -> list:
-    """Get GBIF participant nodes."""
-    data = query("node", {"limit": limit}, delay=0.1)
-    return data.get("results", [])
+        Returns:
+            List of (name, count) tuples.
+        """
+        params = {"limit": 0, "facet": facet, "facetLimit": facet_limit}
+        if filters:
+            params.update(filters)
 
-def count_countries() -> dict:
-    """Get observation counts by publishing country."""
-    data = query("occurrence/counts/countries", {"publishingCountry": ""}, delay=0.1)
-    return data
+        data = self.query("occurrence/search", params)
+
+        facets = data.get("facets", [])
+        if not facets:
+            return []
+
+        return [(item["name"], item["count"]) for item in facets[0].get("counts", [])]
+
+    def get_nodes(self, limit=300):
+        """Get GBIF participant nodes.
+
+        Args:
+            limit: Maximum number of nodes to return (default 300).
+
+        Returns:
+            List of node dicts.
+        """
+        data = self.query("node", {"limit": limit})
+        return data.get("results", [])
+
+    def count_countries(self):
+        """Get observation counts by publishing country.
+
+        Returns:
+            Dict mapping country codes to counts.
+        """
+        return self.query("occurrence/counts/countries",
+                          {"publishingCountry": ""})
