@@ -151,7 +151,10 @@ class TestFunctional:
         """Create a test City object."""
         mod = _load_client_module()
         cities_mod = sys.modules.get("climate_trends_climate_cities") or sys.modules.get("climate.cities")
-        return cities_mod.City(name="TestCity", lat=52.52, lon=13.40, country="DE")
+        return cities_mod.City(
+            name="TestCity", country="DE", continent="Europe",
+            lat=52.52, lon=13.40, climate="Oceanic", pop_millions=3.6,
+        )
 
     def test_fetch_historical_batch(self, tmp_path):
         """fetch_historical_batch returns FetchResult with city data."""
@@ -220,7 +223,10 @@ class TestFunctional:
         transport = httpx.MockTransport(handler)
         cache_path = tmp_path / "cache.db"
         cities_mod = sys.modules.get("climate_trends_climate_cities") or sys.modules.get("climate.cities")
-        city = cities_mod.City(name="TestCity", lat=52.52, lon=13.40, country="DE")
+        city = cities_mod.City(
+            name="TestCity", country="DE", continent="Europe",
+            lat=52.52, lon=13.40, climate="Oceanic", pop_millions=3.6,
+        )
         with mod.OpenMeteoClient(
             cache_path=cache_path, transport=transport,
             historical_delay=0.0, climate_delay=0.0,
