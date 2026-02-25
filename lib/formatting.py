@@ -11,7 +11,7 @@ and solar-cycles.
 
 Usage::
 
-    from lib.formatting import fmt, sign, p_str, stars, fmt_pct, fmt_num
+    from lib.formatting import fmt, sign, p_str, stars, fmt_pct, fmt_num, fmt_change
 
     fmt(1.23456)        # '1.235'
     sign(-0.05, 2)      # '-0.05'
@@ -199,3 +199,31 @@ def fmt_num(x: Numeric) -> str:
     if isinstance(x, float):
         return f"{x:,.1f}"
     return f"{x:,}"
+
+
+def fmt_change(x: Numeric, decimals: int = 1) -> str:
+    """Format a change value as a signed percentage.
+
+    Converts a fraction (0\u20131 scale) to a percentage and prepends
+    '+' for positive values. Zero gets no sign prefix.
+
+    Args:
+        x: The change fraction (e.g. 0.15 \u2192 '+15.0%').
+            Returns em-dash for None/NaN/inf.
+        decimals: Number of decimal places (default 1).
+
+    Returns:
+        Signed percentage string, or '\u2014' if missing.
+
+    Examples:
+        >>> fmt_change(0.15)
+        '+15.0%'
+        >>> fmt_change(-0.08)
+        '-8.0%'
+        >>> fmt_change(0.0)
+        '0.0%'
+    """
+    if _is_missing(x):
+        return _DASH
+    prefix = "+" if x > 0 else ""
+    return f"{prefix}{x * 100:.{decimals}f}%"

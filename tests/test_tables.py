@@ -90,8 +90,8 @@ class TestMdTableEdgeCases:
     def test_row_shorter_than_headers_padded(self):
         result = md_table(["A", "B", "C"], [["1"]])
         data_line = result.split("\n")[2]
-        # Should have 3 cells, with empty padding
-        parts = [p.strip() for p in data_line.split("|") if p.strip()]
+        # Split by '|' and take inner cells (skip leading/trailing empties from split)
+        parts = [p.strip() for p in data_line.split("|")[1:-1]]
         assert len(parts) == 3
         assert parts[0] == "1"
         assert parts[1] == ""
