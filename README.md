@@ -25,13 +25,17 @@ python analyze.py          # Run analysis and generate report
 
 ```
 tools/
-├── lib/                    # Shared Python library (formatting, caching, API client, stats, tables)
-│   ├── __init__.py
+├── lib/                    # Shared Python library
 │   ├── api_client.py       # BaseAPIClient with retry, rate limiting, caching
 │   ├── cache.py            # ResponseCache (SQLite-backed, TTL support)
 │   ├── formatting.py       # Number formatting helpers (fmt, sign, p_str, stars, etc.)
 │   ├── stats.py            # Statistical methods (Mann-Kendall, Sen's slope, OLS, Gini)
-│   └── tables.py           # Markdown table generation
+│   ├── tables.py           # Markdown table generation
+│   └── literature/         # Academic literature search, claim extraction, synthesis
+│       ├── search/         # OpenAlex, Semantic Scholar, CrossRef, arXiv clients
+│       ├── extract.py      # Heuristic claim extraction from abstracts
+│       ├── compare.py      # Compare local findings against literature
+│       └── report.py       # Markdown sections + BibTeX references
 │
 ├── research-engine/        # Web research pipeline — 2,800 lines
 ├── sci-trends/             # OpenAlex bibliometrics
@@ -49,7 +53,7 @@ tools/
 ├── currency-contagion/     # FX crisis contagion network analysis
 ├── gbif-biodiversity/      # GBIF biodiversity sampling bias
 │
-├── tests/                  # pytest test suite (336 tests)
+├── tests/                  # pytest test suite (466 tests)
 ├── pyproject.toml          # Package configuration + editable install
 ├── .gitignore
 └── README.md               # This file
@@ -78,6 +82,12 @@ Each tool follows a similar pattern:
 | **gbif-biodiversity** | GBIF | Biodiversity observation sampling bias |
 
 All tools use the shared library (`lib/`) for API clients, caching, formatting, statistics, and table generation.
+
+## Literature Review Library
+
+The shared library includes `lib.literature`, a reusable module for academic literature search and synthesis. It can search four academic APIs (OpenAlex, Semantic Scholar, CrossRef, arXiv), extract structured claims from abstracts using regex heuristics (no LLM dependency), compare your analysis results against published findings, and generate Markdown review sections with BibTeX references.
+
+See [`lib/literature/README.md`](lib/literature/README.md) for full documentation and usage examples.
 
 ## How Each Tool Works
 
