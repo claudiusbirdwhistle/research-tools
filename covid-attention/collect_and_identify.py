@@ -21,7 +21,7 @@ from datetime import datetime
 # Add sci-trends to path for OpenAlex client
 sys.path.insert(0, str(Path("/tools/sci-trends")))
 from openalex.client import OpenAlexClient
-from openalex.cache import ResponseCache
+from lib.cache import ResponseCache
 
 DATA_DIR = Path("/tools/covid-attention/data")
 TOPIC_GROWTH_FILE = Path("/tools/sci-trends/data/topic_growth.json")
