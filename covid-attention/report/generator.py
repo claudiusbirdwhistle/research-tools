@@ -12,6 +12,8 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
+from lib.formatting import fmt_num
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 OUTPUT_DIR = Path("/output/research/covid-attention")
 
@@ -40,15 +42,6 @@ def deduplicate_topics(topics):
         else:
             dups += 1
     return unique, dups
-
-
-def format_number(n):
-    """Format number with comma separators."""
-    if isinstance(n, float):
-        if abs(n) >= 1000:
-            return f"{n:,.0f}"
-        return f"{n:,.1f}"
-    return f"{n:,}"
 
 
 def generate_executive_summary(data, unique_topics):
@@ -213,13 +206,13 @@ def generate_retained_section(topics):
         lines.append("#### Misinformation and Its Impacts")
         lines.append("")
         lines.append(
-            f"- **Pre-COVID**: {format_number(misinfo['pre_covid_avg'])} avg monthly Wikipedia views"
+            f"- **Pre-COVID**: {fmt_num(misinfo['pre_covid_avg'])} avg monthly Wikipedia views"
         )
         lines.append(
-            f"- **Peak COVID**: {format_number(misinfo['peak_covid_avg'])} avg monthly views ({misinfo['peak_ratio']:.1f}x surge)"
+            f"- **Peak COVID**: {fmt_num(misinfo['peak_covid_avg'])} avg monthly views ({misinfo['peak_ratio']:.1f}x surge)"
         )
         lines.append(
-            f"- **Post-COVID**: {format_number(misinfo['post_covid_avg'])} avg monthly views "
+            f"- **Post-COVID**: {fmt_num(misinfo['post_covid_avg'])} avg monthly views "
             f"(**{misinfo['covid_dividend_pct']:+.0f}%** lasting gain)"
         )
         lines.append(
@@ -242,10 +235,10 @@ def generate_retained_section(topics):
         lines.append("#### Cardiac Arrhythmias and Treatments")
         lines.append("")
         lines.append(
-            f"- **Pre-COVID**: {format_number(cardiac['pre_covid_avg'])} avg monthly views"
+            f"- **Pre-COVID**: {fmt_num(cardiac['pre_covid_avg'])} avg monthly views"
         )
         lines.append(
-            f"- **Post-COVID**: {format_number(cardiac['post_covid_avg'])} avg monthly views "
+            f"- **Post-COVID**: {fmt_num(cardiac['post_covid_avg'])} avg monthly views "
             f"(**{cardiac['covid_dividend_pct']:+.0f}%** lasting gain)"
         )
         lines.append(
@@ -312,8 +305,8 @@ def generate_declined_section(topics):
     for i, t in enumerate(declined[:15], 1):
         lines.append(
             f"| {i} | {t['topic_name'][:40]} | {t['field_name'][:25]} | "
-            f"{t['covid_dividend_pct']:+.0f}% | {format_number(t['pre_covid_avg'])} | "
-            f"{format_number(t['post_covid_avg'])} | {t['alignment_classification']} |"
+            f"{t['covid_dividend_pct']:+.0f}% | {fmt_num(t['pre_covid_avg'])} | "
+            f"{fmt_num(t['post_covid_avg'])} | {t['alignment_classification']} |"
         )
     lines.append("")
 
@@ -328,7 +321,7 @@ def generate_declined_section(topics):
         lines.append("")
         lines.append(
             f"The most extreme decline in the dataset. Pre-COVID monthly views: "
-            f"**{format_number(avi['pre_covid_avg'])}**. Post-COVID: **{format_number(avi['post_covid_avg'])}**. "
+            f"**{fmt_num(avi['pre_covid_avg'])}**. Post-COVID: **{fmt_num(avi['post_covid_avg'])}**. "
             f"At its peak ({avi['peak_month']}), the topic reached {avi['peak_ratio']:.1f}x baseline, "
             f"then collapsed to just {100*(1 + avi['covid_dividend_pct']/100):.1f}% of original traffic."
         )
@@ -364,8 +357,8 @@ def generate_declined_section(topics):
             f"Perhaps the most telling finding: COVID-19's own Wikipedia topic is now "
             f"**{abs(sars['covid_dividend_pct']):.0f}% below** its pre-pandemic baseline. "
             f"Peak views reached {sars['peak_ratio']:.1f}x in early 2020, but post-pandemic "
-            f"monthly views ({format_number(sars['post_covid_avg'])}) are far below the pre-COVID "
-            f"average ({format_number(sars['pre_covid_avg'])}). The public has not just moved on "
+            f"monthly views ({fmt_num(sars['post_covid_avg'])}) are far below the pre-COVID "
+            f"average ({fmt_num(sars['pre_covid_avg'])}). The public has not just moved on "
             f"from COVID -- it has moved on so far that residual interest is a fraction of the "
             f"pre-existing baseline for coronavirus research."
         )
