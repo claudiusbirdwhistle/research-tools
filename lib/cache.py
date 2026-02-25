@@ -75,7 +75,7 @@ class ResponseCache:
         """)
         self._conn.commit()
 
-    def get(self, key: str):
+    def get(self, key: str) -> dict | list | str | None:
         """Return cached data if it exists and hasn't expired.
 
         Expired entries are lazily deleted on access. Returns None
@@ -100,7 +100,7 @@ class ResponseCache:
             return None
         return json.loads(data_json)
 
-    def put(self, key: str, data, status_code: int = 200):
+    def put(self, key: str, data: dict | list | str, status_code: int = 200) -> None:
         """Store data in the cache.
 
         Args:
@@ -136,7 +136,7 @@ class ResponseCache:
         cached_at = row[0]
         return time.time() - cached_at <= self.ttl
 
-    def clear(self):
+    def clear(self) -> None:
         """Remove all cached entries."""
         self._conn.execute("DELETE FROM cache")
         self._conn.commit()
@@ -197,7 +197,7 @@ class ResponseCache:
             raw += json.dumps(params, sort_keys=True)
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    def close(self):
+    def close(self) -> None:
         """Close the database connection."""
         if self._conn:
             self._conn.close()

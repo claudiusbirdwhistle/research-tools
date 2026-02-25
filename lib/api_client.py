@@ -204,7 +204,7 @@ class BaseAPIClient:
             "cache_hits": self._cache_hits,
         }
 
-    def close(self):
+    def close(self) -> None:
         """Close the HTTP client and the cache (if owned)."""
         if self._http:
             self._http.close()

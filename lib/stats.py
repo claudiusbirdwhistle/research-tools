@@ -192,7 +192,7 @@ def ols_trend(
     }
 
 
-def gini(values) -> float:
+def gini(values: np.ndarray | list) -> float:
     """Compute the Gini coefficient for inequality measurement.
 
     The Gini coefficient ranges from 0 (perfect equality, all values
