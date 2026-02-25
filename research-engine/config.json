@@ -1,0 +1,50 @@
+{
+  "search": {
+    "max_queries_per_question": 5,
+    "max_results_per_query": 10,
+    "search_delay_seconds": 1.5
+  },
+  "fetcher": {
+    "timeout_seconds": 10,
+    "max_retries": 2,
+    "rate_limit_per_domain_seconds": 1.0,
+    "max_page_size_bytes": 5242880,
+    "user_agent": "ResearchEngine/0.1 (autonomous research agent; +https://github.com/research-engine)"
+  },
+  "cache": {
+    "default_ttl_seconds": 86400,
+    "news_ttl_seconds": 86400,
+    "reference_ttl_seconds": 604800,
+    "db_path": "data/cache.db"
+  },
+  "evaluator": {
+    "min_quality_score": 3.0,
+    "weights": {
+      "domain_reputation": 3,
+      "content_substance": 2,
+      "freshness": 2,
+      "consistency": 2,
+      "accessibility": 1
+    },
+    "domains_file": "data/domains.json"
+  },
+  "report": {
+    "output_dir": "/output/research",
+    "max_sources_cited": 15,
+    "min_sources_for_report": 3
+  },
+  "depth_profiles": {
+    "shallow": {
+      "max_queries": 2,
+      "max_sources": 8
+    },
+    "normal": {
+      "max_queries": 4,
+      "max_sources": 15
+    },
+    "deep": {
+      "max_queries": 6,
+      "max_sources": 25
+    }
+  }
+}

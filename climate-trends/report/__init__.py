@@ -1,0 +1,1 @@
+"""Climate report generation."""

@@ -1,0 +1,1 @@
+"""Solar cycle report generation."""
