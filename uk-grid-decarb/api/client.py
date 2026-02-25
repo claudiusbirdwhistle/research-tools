@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx
 
-from .cache import ResponseCache
+from lib.cache import ResponseCache
 
 BASE_URL = "https://api.carbonintensity.org.uk"
 REQUEST_DELAY = 0.3  # seconds between requests
