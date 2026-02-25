@@ -1,49 +1,45 @@
-"""USGS Earthquake Catalog API client."""
+"""USGS Earthquake Catalog API client.
+
+Uses BaseAPIClient for HTTP handling, caching, and retry logic.
+
+Endpoint: https://earthquake.usgs.gov/fdsnws/event/1
+  - /count: event count (JSON)
+  - /query: event query (CSV or GeoJSON)
+"""
 
 import csv
 import io
-import time
-import httpx
 from pathlib import Path
+
+from lib.api_client import BaseAPIClient
 from lib.cache import ResponseCache
 
 BASE_URL = "https://earthquake.usgs.gov/fdsnws/event/1"
 MAX_PER_QUERY = 20000
 
 
-class USGSClient:
-    def __init__(self, cache_path=None, request_delay=0.5):
-        self.cache = ResponseCache(db_path=cache_path)
-        self.delay = request_delay
-        self.http = None
-        self.requests_made = 0
-        self.cache_hits = 0
+class USGSClient(BaseAPIClient):
+    """Client for the USGS Earthquake Hazards Program FDSN API.
 
-    def __enter__(self):
-        self.cache.__enter__()
-        self.http = httpx.Client(timeout=120, follow_redirects=True)
-        return self
+    Inherits HTTP handling, caching, and retry from BaseAPIClient.
 
-    def __exit__(self, *args):
-        if self.http:
-            self.http.close()
-        self.cache.__exit__(*args)
+    Args:
+        cache_path: Path to SQLite cache database. If None, uses default.
+        request_delay: Minimum seconds between requests (default 0.5).
+        **kwargs: Additional arguments passed to BaseAPIClient (e.g.
+            transport for testing).
+    """
 
-    def _get(self, endpoint, params):
-        url = f"{BASE_URL}/{endpoint}"
-        key = ResponseCache.make_key(url, params)
-        cached = self.cache.get(key)
-        if cached is not None:
-            self.cache_hits += 1
-            return cached
-
-        time.sleep(self.delay)
-        resp = self.http.get(url, params=params)
-        resp.raise_for_status()
-        text = resp.text
-        self.cache.put(key, text, resp.status_code)
-        self.requests_made += 1
-        return text
+    def __init__(self, cache_path=None, request_delay=0.5, **kwargs):
+        cache = ResponseCache(db_path=cache_path)
+        super().__init__(
+            base_url=BASE_URL,
+            cache=cache,
+            rate_limit_delay=request_delay,
+            timeout=120.0,
+            user_agent="Seismicity/1.0 (autonomous-agent@research.local)",
+            **kwargs,
+        )
 
     def count(self, starttime, endtime, minmagnitude=None, **kwargs):
         """Get count of matching events."""
@@ -51,8 +47,7 @@ class USGSClient:
         if minmagnitude is not None:
             params["minmagnitude"] = minmagnitude
         params.update(kwargs)
-        import json
-        data = json.loads(self._get("count", params))
+        data = self.get_json("/count", params=params)
         return data["count"]
 
     def query_csv(self, starttime, endtime, minmagnitude=None, limit=MAX_PER_QUERY,
@@ -69,7 +64,7 @@ class USGSClient:
             params["minmagnitude"] = minmagnitude
         params.update(kwargs)
 
-        text = self._get("query", params)
+        text = self.get_text("/query", params=params)
         reader = csv.DictReader(io.StringIO(text))
         events = []
         for row in reader:
@@ -109,7 +104,6 @@ class USGSClient:
 
         Radius scaled by mainshock magnitude: R = 10^(0.5*M - 1.78) km
         """
-        import math
         from datetime import datetime, timedelta
 
         radius_km = 10 ** (0.5 * mainshock_mag - 1.78)
@@ -129,13 +123,6 @@ class USGSClient:
             maxradiuskm=radius_km,
         )
         return events, radius_km
-
-    def stats(self):
-        return {
-            "requests_made": self.requests_made,
-            "cache_hits": self.cache_hits,
-            "cache": self.cache.stats(),
-        }
 
 
 def _parse_event(row):
