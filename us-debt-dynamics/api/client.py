@@ -1,81 +1,71 @@
-"""Treasury Fiscal Data API client with SQLite caching and pagination."""
-import httpx
+"""Treasury Fiscal Data API client with caching and pagination.
+
+Uses the shared lib.cache.ResponseCache for SQLite-backed response
+caching with TTL expiration.
+"""
+
 import json
-import sqlite3
-import time
-import hashlib
 import os
+import time
+
+import httpx
+
+from lib.cache import ResponseCache
 
 BASE_URL = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
 CACHE_DB = os.path.join(os.path.dirname(__file__), '..', 'data', 'cache.db')
 CACHE_TTL = 86400 * 7  # 7 days
 
-def _init_cache(db_path):
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("""CREATE TABLE IF NOT EXISTS cache (
-        key TEXT PRIMARY KEY,
-        response TEXT,
-        timestamp REAL
-    )""")
-    conn.commit()
-    return conn
-
-def _cache_key(url, params):
-    s = url + json.dumps(params, sort_keys=True)
-    return hashlib.sha256(s.encode()).hexdigest()
 
 def fetch_endpoint(endpoint, fields=None, filters=None, sort=None, page_size=10000, max_pages=20):
     """Fetch all records from a Treasury API endpoint with pagination and caching."""
-    conn = _init_cache(CACHE_DB)
+    cache = ResponseCache(db_path=CACHE_DB, ttl=CACHE_TTL)
     all_data = []
     page = 1
 
-    while page <= max_pages:
-        params = {
-            "page[number]": str(page),
-            "page[size]": str(page_size),
-            "format": "json"
-        }
-        if fields:
-            params["fields"] = fields
-        if filters:
-            params["filter"] = filters
-        if sort:
-            params["sort"] = sort
+    try:
+        while page <= max_pages:
+            params = {
+                "page[number]": str(page),
+                "page[size]": str(page_size),
+                "format": "json"
+            }
+            if fields:
+                params["fields"] = fields
+            if filters:
+                params["filter"] = filters
+            if sort:
+                params["sort"] = sort
 
-        url = f"{BASE_URL}/{endpoint}"
-        cache_k = _cache_key(url, params)
+            url = f"{BASE_URL}/{endpoint}"
+            cache_key = ResponseCache.make_key(url, params)
 
-        # Check cache
-        row = conn.execute("SELECT response, timestamp FROM cache WHERE key=?", (cache_k,)).fetchone()
-        if row and (time.time() - row[1]) < CACHE_TTL:
-            result = json.loads(row[0])
-        else:
-            # Build URL with properly encoded params
-            resp = httpx.get(url, params=params, timeout=60)
-            resp.raise_for_status()
-            result = resp.json()
-            conn.execute("INSERT OR REPLACE INTO cache (key, response, timestamp) VALUES (?, ?, ?)",
-                         (cache_k, json.dumps(result), time.time()))
-            conn.commit()
-            time.sleep(0.2)  # Be polite
+            # Check cache
+            cached = cache.get(cache_key)
+            if cached is not None:
+                result = cached
+            else:
+                resp = httpx.get(url, params=params, timeout=60)
+                resp.raise_for_status()
+                result = resp.json()
+                cache.put(cache_key, result, resp.status_code)
+                time.sleep(0.2)  # Be polite
 
-        data = result.get("data", [])
-        all_data.extend(data)
+            data = result.get("data", [])
+            all_data.extend(data)
 
-        meta = result.get("meta", {})
-        total_pages = meta.get("total-pages", 1)
-        total_count = meta.get("total-count", len(data))
+            meta = result.get("meta", {})
+            total_pages = meta.get("total-pages", 1)
+            total_count = meta.get("total-count", len(data))
 
-        print(f"  Page {page}/{total_pages}: {len(data)} records (total so far: {len(all_data)}/{total_count})")
+            print(f"  Page {page}/{total_pages}: {len(data)} records (total so far: {len(all_data)}/{total_count})")
 
-        if page >= total_pages or len(data) == 0:
-            break
-        page += 1
+            if page >= total_pages or len(data) == 0:
+                break
+            page += 1
+    finally:
+        cache.close()
 
-    conn.close()
     return all_data
 
 def collect_all():
