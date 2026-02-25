@@ -6,6 +6,8 @@ from pathlib import Path
 from scipy import stats
 from typing import Dict, List, Any
 
+from lib.stats import mann_kendall as _lib_mk, sen_slope as _lib_sen
+
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 OUT_DIR = Path(__file__).parent.parent / "data" / "analysis"
 
@@ -72,48 +74,15 @@ def compute_annual_stats(dates: List[str], flows: np.ndarray) -> Dict[int, Dict]
 
 
 def mann_kendall(y: np.ndarray):
-    """Mann-Kendall trend test."""
-    n = len(y)
-    s = 0
-    for i in range(n - 1):
-        for j in range(i + 1, n):
-            diff = y[j] - y[i]
-            if diff > 0:
-                s += 1
-            elif diff < 0:
-                s -= 1
-
-    # Variance
-    unique, counts = np.unique(y, return_counts=True)
-    tp = 0
-    for c in counts:
-        if c > 1:
-            tp += c * (c - 1) * (2 * c + 5)
-
-    var_s = (n * (n - 1) * (2 * n + 5) - tp) / 18.0
-
-    if s > 0:
-        z = (s - 1) / np.sqrt(var_s) if var_s > 0 else 0
-    elif s < 0:
-        z = (s + 1) / np.sqrt(var_s) if var_s > 0 else 0
-    else:
-        z = 0
-
-    p = 2 * (1 - stats.norm.cdf(abs(z)))
-    return {"S": int(s), "z": float(z), "p": float(p), "significant": p < 0.05}
+    """Mann-Kendall trend test. Returns dict with S, z, p, significant."""
+    result = _lib_mk(np.asarray(y))
+    return {"S": result["S"], "z": result["z"], "p": result["p_value"],
+            "significant": result["significant"]}
 
 
 def sens_slope(x: np.ndarray, y: np.ndarray):
-    """Sen's slope estimator."""
-    slopes = []
-    n = len(x)
-    for i in range(n):
-        for j in range(i + 1, n):
-            if x[j] != x[i]:
-                slopes.append((y[j] - y[i]) / (x[j] - x[i]))
-    if not slopes:
-        return 0.0
-    return float(np.median(slopes))
+    """Sen's slope estimator (per year)."""
+    return _lib_sen(np.asarray(x), np.asarray(y), per_decade=False)
 
 
 def analyze_trend(years: np.ndarray, values: np.ndarray, label: str = "mean") -> Dict:
