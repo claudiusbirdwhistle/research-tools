@@ -67,3 +67,28 @@ class FrankfurterClient(BaseAPIClient):
             rates = self.fetch_year(year, currencies, base=base)
             all_rates.update(rates)
         return all_rates
+
+
+def collect_all(currencies: list[str], start_year: int = 1999,
+                end_year: int = 2025, base: str = "USD") -> dict:
+    """Collect daily FX rates for all years (module-level convenience function).
+
+    Creates a FrankfurterClient internally and fetches rates year by year.
+    Callers can import this directly::
+
+        from fx.client import collect_all
+        rates = collect_all(["EUR", "GBP"], start_year=2020, end_year=2024)
+
+    Args:
+        currencies: List of target currency codes.
+        start_year: First year to fetch (default 1999).
+        end_year: Last year to fetch (default 2025).
+        base: Base currency code (default "USD").
+
+    Returns:
+        Dict mapping date strings to {currency: rate} dicts.
+    """
+    with FrankfurterClient() as client:
+        return client.collect_all(
+            currencies, start_year=start_year, end_year=end_year, base=base,
+        )
