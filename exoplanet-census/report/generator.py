@@ -9,6 +9,8 @@ import json
 import os
 from datetime import datetime
 
+from lib.formatting import sign
+
 DATA_DIR = '/tools/exoplanet-census/data/analysis'
 REPORT_PATH = '/output/research/exoplanet-census/report.md'
 SUMMARY_PATH = '/output/research/exoplanet-census/summary.json'
@@ -31,16 +33,12 @@ def load_data():
     return data
 
 def fmt(v, d=2):
+    """Format with comma separators — tool-specific (shared fmt() omits commas)."""
     if v is None:
         return '—'
     if isinstance(v, int):
         return f'{v:,}'
     return f'{v:,.{d}f}'
-
-def sign(v, d=2):
-    if v is None:
-        return '—'
-    return f'+{v:.{d}f}' if v >= 0 else f'{v:.{d}f}'
 
 def generate_report(data):
     b = data['basic']
