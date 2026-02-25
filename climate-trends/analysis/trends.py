@@ -5,12 +5,12 @@ significance testing. Works on annual mean temperatures derived from daily data.
 """
 
 import json
-import math
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
 import numpy as np
-from scipy import stats as sp_stats
+
+from lib.stats import mann_kendall, sen_slope, ols_trend as _ols_trend
 
 
 @dataclass
@@ -78,100 +78,19 @@ def compute_annual_means(daily: dict) -> dict[int, float]:
 
 
 def ols_trend(years: np.ndarray, temps: np.ndarray) -> dict:
-    """Ordinary Least Squares linear regression.
+    """OLS linear regression. Returns slope (°C/decade), R², p-value, 95% CI.
 
-    Returns slope (°C/decade), R², p-value, and 95% CI.
+    Thin adapter over lib.stats.ols_trend that preserves the key names
+    and rounding expected by downstream code.
     """
-    n = len(years)
-    if n < 3:
-        return {"slope_per_decade": 0, "r_squared": 0, "p_value": 1, "ci_lower": 0, "ci_upper": 0}
-
-    slope, intercept, r_value, p_value, std_err = sp_stats.linregress(years, temps)
-
-    # 95% confidence interval for slope
-    t_crit = sp_stats.t.ppf(0.975, n - 2)
-    ci_lower = (slope - t_crit * std_err) * 10  # per decade
-    ci_upper = (slope + t_crit * std_err) * 10
-
+    result = _ols_trend(years, temps, per_decade=True)
     return {
-        "slope_per_decade": round(slope * 10, 4),  # Convert per-year to per-decade
-        "r_squared": round(r_value ** 2, 4),
-        "p_value": round(p_value, 6),
-        "ci_lower": round(ci_lower, 4),
-        "ci_upper": round(ci_upper, 4),
+        "slope_per_decade": round(result["slope"], 4),
+        "r_squared": round(result["r_squared"], 4),
+        "p_value": round(result["p_value"], 6),
+        "ci_lower": round(result["ci_lower"], 4),
+        "ci_upper": round(result["ci_upper"], 4),
     }
-
-
-def mann_kendall(data: np.ndarray) -> dict:
-    """Mann-Kendall monotonic trend test (non-parametric).
-
-    Tests H0: no monotonic trend vs H1: monotonic trend exists.
-    Returns tau statistic, p-value, and significance flag.
-    """
-    n = len(data)
-    if n < 4:
-        return {"tau": 0, "p_value": 1, "significant": False}
-
-    # Compute S statistic
-    s = 0
-    for i in range(n - 1):
-        for j in range(i + 1, n):
-            diff = data[j] - data[i]
-            if diff > 0:
-                s += 1
-            elif diff < 0:
-                s -= 1
-
-    # Kendall's tau
-    tau = s / (n * (n - 1) / 2)
-
-    # Variance of S (accounting for ties)
-    # For continuous data, ties are rare, use standard formula
-    var_s = n * (n - 1) * (2 * n + 5) / 18
-
-    # Normal approximation for p-value
-    if s > 0:
-        z = (s - 1) / math.sqrt(var_s)
-    elif s < 0:
-        z = (s + 1) / math.sqrt(var_s)
-    else:
-        z = 0
-
-    # Two-tailed p-value
-    p_value = 2 * (1 - _norm_cdf(abs(z)))
-
-    return {
-        "tau": round(tau, 4),
-        "p_value": round(p_value, 6),
-        "significant": p_value < 0.05,
-    }
-
-
-def _norm_cdf(z: float) -> float:
-    """Standard normal CDF using error function."""
-    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
-
-
-def sen_slope(years: np.ndarray, data: np.ndarray) -> float:
-    """Sen's slope estimator (Theil-Sen): median of all pairwise slopes.
-
-    More robust to outliers than OLS.
-    Returns slope in units per decade.
-    """
-    n = len(data)
-    if n < 2:
-        return 0.0
-
-    slopes = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            if years[j] != years[i]:
-                slopes.append((data[j] - data[i]) / (years[j] - years[i]))
-
-    if not slopes:
-        return 0.0
-
-    return round(float(np.median(slopes)) * 10, 4)  # per decade
 
 
 def analyze_city(city_name: str, daily: dict) -> list[TrendResult]:
