@@ -12,7 +12,7 @@ import io
 import urllib.parse
 import httpx
 from pathlib import Path
-from .cache import ResponseCache
+from lib.cache import ResponseCache
 
 TAP_URL = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
 
@@ -56,9 +56,9 @@ class NASAExoplanetClient:
         """
         cache_key = f"tap:{sql}:{fmt}"
         cached = self.cache.get(cache_key)
-        if cached:
+        if cached is not None:
             self.cache_hits += 1
-            return cached["data"]
+            return cached
 
         params = {
             "query": sql,
