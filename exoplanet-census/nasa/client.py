@@ -1,5 +1,7 @@
 """NASA Exoplanet Archive TAP API client.
 
+Uses BaseAPIClient for HTTP handling, caching, and retry logic.
+
 Endpoint: https://exoplanetarchive.ipac.caltech.edu/TAP/sync
 Table: pscomppars (composite planet parameters — one row per planet, best values)
 Auth: None required
@@ -9,9 +11,9 @@ Format: CSV via TAP SQL queries
 
 import csv
 import io
-import urllib.parse
-import httpx
 from pathlib import Path
+
+from lib.api_client import BaseAPIClient
 from lib.cache import ResponseCache
 
 TAP_URL = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
@@ -27,22 +29,27 @@ FULL_COLUMNS = [
 ]
 
 
-class NASAExoplanetClient:
-    def __init__(self, cache_path=None):
-        self.cache = ResponseCache(db_path=cache_path)
-        self.http = None
-        self.requests_made = 0
-        self.cache_hits = 0
+class NASAExoplanetClient(BaseAPIClient):
+    """Client for the NASA Exoplanet Archive TAP API.
 
-    def __enter__(self):
-        self.cache.__enter__()
-        self.http = httpx.Client(timeout=120, follow_redirects=True)
-        return self
+    Inherits HTTP handling, caching, and retry from BaseAPIClient.
 
-    def __exit__(self, *args):
-        if self.http:
-            self.http.close()
-        self.cache.__exit__(*args)
+    Args:
+        cache_path: Path to SQLite cache database. If None, uses default.
+        **kwargs: Additional arguments passed to BaseAPIClient (e.g.
+            transport for testing).
+    """
+
+    def __init__(self, cache_path=None, **kwargs):
+        cache = ResponseCache(db_path=cache_path)
+        super().__init__(
+            base_url=TAP_URL,
+            cache=cache,
+            timeout=120,
+            rate_limit_delay=0.0,
+            user_agent="ExoplanetCensus/1.0 (autonomous-agent@research.local)",
+            **kwargs,
+        )
 
     def query_tap(self, sql, fmt="csv"):
         """Execute a TAP SQL query against the NASA Exoplanet Archive.
@@ -54,23 +61,11 @@ class NASAExoplanetClient:
         Returns:
             Raw response text (CSV or JSON string)
         """
-        cache_key = f"tap:{sql}:{fmt}"
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            self.cache_hits += 1
-            return cached
-
         params = {
             "query": sql,
             "format": fmt,
         }
-        url = f"{TAP_URL}?{urllib.parse.urlencode(params)}"
-        resp = self.http.get(url)
-        resp.raise_for_status()
-        text = resp.text
-        self.cache.put(cache_key, text, resp.status_code)
-        self.requests_made += 1
-        return text
+        return self.get_text(TAP_URL, params=params)
 
     def query_tap_rows(self, sql):
         """Execute TAP query and return list of dicts."""
@@ -110,10 +105,3 @@ class NASAExoplanetClient:
             f.write(text)
         print(f"  Catalog: {len(rows)} planets → {output_path}")
         return {"planets": len(rows), "path": str(output_path)}
-
-    def stats(self):
-        return {
-            "requests_made": self.requests_made,
-            "cache_hits": self.cache_hits,
-            "cache": self.cache.stats(),
-        }
