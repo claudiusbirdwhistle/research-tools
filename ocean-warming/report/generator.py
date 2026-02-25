@@ -16,6 +16,8 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 
+from lib.formatting import fmt, sign, p_str, stars
+
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 
@@ -27,46 +29,6 @@ TRENDS_FILE = DATA_DIR / "trends.json"
 ACCELERATION_FILE = DATA_DIR / "acceleration.json"
 ENSO_FILE = DATA_DIR / "enso.json"
 COMPARISON_FILE = DATA_DIR / "comparison.json"
-
-
-# ── Formatting helpers ─────────────────────────────────────────────────────
-
-def fmt(x, decimals=3):
-    """Format a number with fixed decimal places, or em-dash if None."""
-    if x is None:
-        return "\u2014"
-    return f"{x:.{decimals}f}"
-
-
-def sign(x, decimals=3):
-    """Format a number with explicit +/- sign."""
-    if x is None:
-        return "\u2014"
-    return f"+{x:.{decimals}f}" if x >= 0 else f"{x:.{decimals}f}"
-
-
-def p_str(p):
-    """Format a p-value for display."""
-    if p is None:
-        return "\u2014"
-    if p < 0.001:
-        return "<0.001"
-    if p < 0.01:
-        return f"{p:.3f}"
-    return f"{p:.2f}"
-
-
-def stars(p):
-    """Return significance stars for a p-value."""
-    if p is None:
-        return ""
-    if p < 0.001:
-        return "***"
-    if p < 0.01:
-        return "**"
-    if p < 0.05:
-        return "*"
-    return ""
 
 
 # ── Data loading ───────────────────────────────────────────────────────────
