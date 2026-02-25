@@ -5,7 +5,7 @@ import io
 import time
 import httpx
 from pathlib import Path
-from .cache import ResponseCache
+from lib.cache import ResponseCache
 
 BASE_URL = "https://earthquake.usgs.gov/fdsnws/event/1"
 MAX_PER_QUERY = 20000
@@ -31,16 +31,17 @@ class USGSClient:
 
     def _get(self, endpoint, params):
         url = f"{BASE_URL}/{endpoint}"
-        cached = self.cache.get(url, params)
-        if cached:
+        key = ResponseCache.make_key(url, params)
+        cached = self.cache.get(key)
+        if cached is not None:
             self.cache_hits += 1
-            return cached["data"]
+            return cached
 
         time.sleep(self.delay)
         resp = self.http.get(url, params=params)
         resp.raise_for_status()
         text = resp.text
-        self.cache.put(url, text, resp.status_code, params)
+        self.cache.put(key, text, resp.status_code)
         self.requests_made += 1
         return text
 
