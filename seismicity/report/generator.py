@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from datetime import datetime
 
+from lib.formatting import sign
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 ANALYSIS_DIR = DATA_DIR / "analysis"
 OUTPUT_DIR = Path("/output/research/seismicity")
@@ -30,7 +32,7 @@ def load_results():
 
 
 def fmt(n, decimals=1):
-    """Format number."""
+    """Format number with comma separators — tool-specific (shared fmt() omits commas)."""
     if n is None:
         return "N/A"
     if isinstance(n, str):
@@ -42,13 +44,6 @@ def fmt(n, decimals=1):
     if isinstance(n, int):
         return f"{n:,}"
     return str(n)
-
-
-def sign(n, decimals=1):
-    """Format signed number."""
-    if n is None:
-        return "N/A"
-    return f"{n:+.{decimals}f}"
 
 
 def generate_report(results):
@@ -165,10 +160,10 @@ def generate_executive_summary(gr, omori, temp):
     m70_trend = temp.get("trends", {}).get("m70_1964_2024", {})
     lines.append(
         f"5. **Apparent rate increases are mostly completeness artifacts**: M5.0+ rates show "
-        f"a {sign(m50_trend.get('rate_change_per_decade_pct', 0))}%/decade increase (p<0.001), "
+        f"a {sign(m50_trend.get('rate_change_per_decade_pct', 0), 1)}%/decade increase (p<0.001), "
         f"but this largely reflects improving detection (global Mc dropped from 5.7 to 5.2 "
         f"between the 1960s and 1970s). M7.0+ rates show a smaller "
-        f"{sign(m70_trend.get('rate_change_per_decade_pct', 0))}%/decade increase (p=0.020), "
+        f"{sign(m70_trend.get('rate_change_per_decade_pct', 0), 1)}%/decade increase (p=0.020), "
         f"which is less susceptible to completeness bias but remains within natural variability."
     )
     lines.append("")
