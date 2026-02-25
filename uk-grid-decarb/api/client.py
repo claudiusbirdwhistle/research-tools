@@ -1,25 +1,24 @@
 """UK Carbon Intensity API client.
 
-Handles chunking (31d intensity, 60d generation, 14d regional),
-caching, retry with exponential backoff, and rate limiting.
+Uses BaseAPIClient for HTTP handling, caching, and retry logic.
+
+Handles chunking (31d intensity, 60d generation, 14d regional).
 
 API base: https://api.carbonintensity.org.uk
 No authentication required.
 """
 
-import time
-import math
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import httpx
-
+from lib.api_client import BaseAPIClient
 from lib.cache import ResponseCache
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.carbonintensity.org.uk"
 REQUEST_DELAY = 0.3  # seconds between requests
-MAX_RETRIES = 3
-RETRY_BACKOFF = 2.0  # exponential backoff multiplier
 
 # Chunk sizes per endpoint (days)
 INTENSITY_CHUNK_DAYS = 30
@@ -42,59 +41,45 @@ def _date_chunks(start: datetime, end: datetime, chunk_days: int):
         current = chunk_end
 
 
-class CarbonIntensityClient:
-    """Client for UK Carbon Intensity API with caching and retry."""
+class CarbonIntensityClient(BaseAPIClient):
+    """Client for UK Carbon Intensity API with caching and retry.
 
-    def __init__(self, cache_path: Path | None = None):
+    Inherits HTTP handling, caching, and retry from BaseAPIClient.
+
+    Args:
+        cache_path: Path to SQLite cache database. If None, uses default.
+        **kwargs: Additional arguments passed to BaseAPIClient (e.g.
+            transport for testing).
+    """
+
+    def __init__(self, cache_path: Path | None = None, **kwargs):
         default_cache = Path(__file__).parent.parent / "data" / "cache.db"
-        self.cache = ResponseCache(cache_path or default_cache)
-        self._client = httpx.Client(timeout=30.0)
-        self._last_request_time = 0.0
-        self.stats = {"requests": 0, "cache_hits": 0, "errors": 0}
-
-    def _rate_limit(self):
-        elapsed = time.time() - self._last_request_time
-        if elapsed < REQUEST_DELAY:
-            time.sleep(REQUEST_DELAY - elapsed)
+        cache = ResponseCache(cache_path or default_cache)
+        super().__init__(
+            base_url=BASE_URL,
+            cache=cache,
+            timeout=30.0,
+            rate_limit_delay=REQUEST_DELAY,
+            max_retries=3,
+            backoff_base=2.0,
+            user_agent="UKGridDecarb/1.0 (autonomous-agent@research.local)",
+            **kwargs,
+        )
+        self._errors = 0
 
     def _fetch(self, url: str) -> dict:
-        """Fetch URL with caching, retry, and rate limiting."""
-        cached = self.cache.get(url)
-        if cached is not None:
-            self.stats["cache_hits"] += 1
-            return cached
+        """Fetch URL with caching, retry, and rate limiting.
 
-        for attempt in range(MAX_RETRIES):
-            self._rate_limit()
-            try:
-                resp = self._client.get(url)
-                self._last_request_time = time.time()
-                self.stats["requests"] += 1
-
-                if resp.status_code == 200:
-                    data = resp.json()
-                    self.cache.put(url, data, 200)
-                    return data
-                elif resp.status_code == 429:
-                    wait = RETRY_BACKOFF ** (attempt + 1)
-                    print(f"  Rate limited, waiting {wait:.0f}s...")
-                    time.sleep(wait)
-                elif resp.status_code >= 500:
-                    wait = RETRY_BACKOFF ** (attempt + 1)
-                    print(f"  Server error {resp.status_code}, retry in {wait:.0f}s...")
-                    time.sleep(wait)
-                else:
-                    self.stats["errors"] += 1
-                    print(f"  HTTP {resp.status_code} for {url}")
-                    return {}
-            except (httpx.ConnectError, httpx.ReadTimeout) as e:
-                wait = RETRY_BACKOFF ** (attempt + 1)
-                print(f"  Connection error: {e}, retry in {wait:.0f}s...")
-                time.sleep(wait)
-
-        self.stats["errors"] += 1
-        print(f"  FAILED after {MAX_RETRIES} retries: {url}")
-        return {}
+        Returns parsed JSON dict on success, or empty dict on error.
+        This preserves the original behavior where callers check
+        ``if data and "data" in data:`` rather than catching exceptions.
+        """
+        try:
+            return self.get_json(url)
+        except Exception as e:
+            self._errors += 1
+            logger.warning("Fetch error for %s: %s", url, e)
+            return {}
 
     def fetch_national_intensity(self, start: datetime, end: datetime, progress_cb=None):
         """Fetch national carbon intensity data in 31-day chunks.
@@ -198,13 +183,3 @@ class CarbonIntensityClient:
         if data and "data" in data:
             return data["data"]
         return {}
-
-    def close(self):
-        self._client.close()
-        self.cache.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()
