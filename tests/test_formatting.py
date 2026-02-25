@@ -63,6 +63,29 @@ class TestFmt:
     def test_neg_inf_returns_dash(self):
         assert fmt(float("-inf")) == "\u2014"
 
+    # ── comma parameter ──
+
+    def test_comma_large_integer(self):
+        """comma=True should add thousands separators."""
+        assert fmt(12345, 0, comma=True) == "12,345"
+
+    def test_comma_large_float(self):
+        assert fmt(12345.6789, 2, comma=True) == "12,345.68"
+
+    def test_comma_small_number(self):
+        """Small numbers don't need commas but should still work."""
+        assert fmt(42.1, 1, comma=True) == "42.1"
+
+    def test_comma_negative(self):
+        assert fmt(-9876.5, 1, comma=True) == "-9,876.5"
+
+    def test_comma_none(self):
+        assert fmt(None, 2, comma=True) == "\u2014"
+
+    def test_comma_false_default(self):
+        """comma defaults to False — no separators."""
+        assert fmt(12345.6789, 2) == "12345.68"
+
 
 # ── sign() tests ─────────────────────────────────────────────────────────
 
