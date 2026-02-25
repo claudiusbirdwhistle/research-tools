@@ -4,19 +4,12 @@ from pathlib import Path
 from scipy import stats
 import numpy as np
 
+from lib.stats import gini
+
 DATA = Path(__file__).parent.parent / "data"
 
 def load(name):
     return json.loads((DATA / "raw" / f"{name}.json").read_text())
-
-def gini(values):
-    """Compute Gini coefficient."""
-    v = np.array(sorted(values), dtype=float)
-    n = len(v)
-    if n == 0 or v.sum() == 0:
-        return 0
-    index = np.arange(1, n + 1)
-    return float((2 * np.sum(index * v) - (n + 1) * np.sum(v)) / (n * np.sum(v)))
 
 def run():
     from data.country_metadata import COUNTRIES
