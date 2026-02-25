@@ -7,6 +7,8 @@ import json
 import os
 from datetime import datetime, timezone
 
+from lib.formatting import p_str
+
 ANALYSIS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'analysis')
 OUTPUT_DIR = '/output/research/uk-grid-decarb'
 
@@ -18,6 +20,7 @@ def load_json(name):
 
 
 def fmt(val, decimals=1):
+    """Format a number with fixed decimals. Returns 'N/A' for None, preserves int formatting."""
     if val is None:
         return 'N/A'
     if isinstance(val, int):
@@ -26,16 +29,11 @@ def fmt(val, decimals=1):
 
 
 def sign(val, decimals=1):
+    """Format a number with explicit +/- sign prefix."""
     s = fmt(val, decimals)
     if val > 0:
         return f'+{s}'
     return s
-
-
-def pval(p):
-    if p < 0.001:
-        return '<0.001'
-    return f'{p:.3f}'
 
 
 def _find_corr(key_corrs, fuel1, fuel2):
@@ -176,9 +174,9 @@ def _section_1_trajectory(trends):
 
 Carbon intensity has declined from 248 gCO2/kWh in 2018 to 129 gCO2/kWh in 2025 — nearly halved in seven years. The trend is highly significant:
 
-- **OLS regression**: {fmt(abs(ci_slope))} gCO2/kWh decline per year (R²={fmt(ci_r2, 3)}, p={pval(ci_p)})
+- **OLS regression**: {fmt(abs(ci_slope))} gCO2/kWh decline per year (R²={fmt(ci_r2, 3)}, p={p_str(ci_p)})
 - **Sen's slope** (robust to outliers): {fmt(abs(ci_sens))} gCO2/kWh per year
-- **Mann-Kendall trend test**: τ = {fmt(t['ci_trend']['mann_kendall_tau'], 3)}, p={pval(mk_p)} (monotonic decrease confirmed)
+- **Mann-Kendall trend test**: τ = {fmt(t['ci_trend']['mann_kendall_tau'], 3)}, p={p_str(mk_p)} (monotonic decrease confirmed)
 
 Renewable generation has driven this decline, growing at **{fmt(re_slope)} percentage points per year** (R²={fmt(re_r2, 3)}), while gas has retreated at {fmt(abs(gas_slope))} pp/yr.
 
@@ -227,7 +225,7 @@ def _section_2_diurnal(diurnal):
     for season in ['DJF', 'MAM', 'JJA', 'SON']:
         dt = deepening.get(season, {})
         sig = 'Yes' if dt.get('p_value', 1) < 0.05 else 'No'
-        deepening_rows.append(f"| {season} | {fmt(dt.get('dip_depth_trend_per_year', 0))} | {fmt(dt.get('r_squared', 0), 3)} | {pval(dt.get('p_value', 1))} | {sig} |")
+        deepening_rows.append(f"| {season} | {fmt(dt.get('dip_depth_trend_per_year', 0))} | {fmt(dt.get('r_squared', 0), 3)} | {p_str(dt.get('p_value', 1))} | {sig} |")
     deepening_table = '\n'.join(deepening_rows)
 
     # Compute 2018 vs 2024 comparison from actual profiles
@@ -311,7 +309,7 @@ def _section_3_wind_stops(fuel):
     corr_rows = []
     for f1, f2, label in corr_pairs:
         c = _find_corr(key_corrs, f1, f2)
-        corr_rows.append(f"| {label} | {fmt(c['r'], 3)} | {pval(c['p'])} |")
+        corr_rows.append(f"| {label} | {fmt(c['r'], 3)} | {p_str(c['p'])} |")
     corr_table = '\n'.join(corr_rows)
 
     # Wind drop compensation
@@ -420,7 +418,7 @@ def _section_4_diminishing(diminishing):
 
     slope_trend = yearly.get('slope_trend', {})
     slope_trend_val = fmt(slope_trend.get('trend_per_year', 0.193), 3)
-    slope_trend_p = pval(slope_trend.get('p_value', 0.004))
+    slope_trend_p = p_str(slope_trend.get('p_value', 0.004))
 
     return f"""## 4. Diminishing Returns?
 
@@ -507,9 +505,9 @@ def _section_5_two_grids(regional):
     ns_table = '\n'.join(ns_rows)
 
     gap_slope = fmt(gap_trend.get('slope_per_year', 4.6))
-    gap_p = pval(gap_trend.get('p_value', 0.047))
+    gap_p = p_str(gap_trend.get('p_value', 0.047))
     sigma_slope = fmt(sigma_trend.get('slope_per_year', -3.0))
-    sigma_p = pval(sigma_trend.get('p_value', 0.002))
+    sigma_p = p_str(sigma_trend.get('p_value', 0.002))
 
     return f"""## 5. A Tale of Two Grids
 
