@@ -1,6 +1,6 @@
 # Research Tools
 
-A collection of 18 data-driven research tools that collect data from public APIs, perform statistical analysis, and generate Markdown reports. Built by an autonomous research agent, now being refactored for maintainability and third-party use.
+A collection of 15 data-driven research tools and a shared Python library for collecting data from public APIs, performing statistical analysis, and generating Markdown reports. Built by an autonomous research agent, refactored for maintainability and third-party use.
 
 ## Quick Start
 
@@ -25,7 +25,13 @@ python analyze.py          # Run analysis and generate report
 
 ```
 tools/
-├── lib/                    # Shared Python library (planned)
+├── lib/                    # Shared Python library (formatting, caching, API client, stats, tables)
+│   ├── __init__.py
+│   ├── api_client.py       # BaseAPIClient with retry, rate limiting, caching
+│   ├── cache.py            # ResponseCache (SQLite-backed, TTL support)
+│   ├── formatting.py       # Number formatting helpers (fmt, sign, p_str, stars, etc.)
+│   ├── stats.py            # Statistical methods (Mann-Kendall, Sen's slope, OLS, Gini)
+│   └── tables.py           # Markdown table generation
 │
 ├── research-engine/        # Web research pipeline — 2,800 lines
 ├── sci-trends/             # OpenAlex bibliometrics
@@ -42,11 +48,9 @@ tools/
 ├── river-flow/             # USGS streamflow trends
 ├── currency-contagion/     # FX crisis contagion network analysis
 ├── gbif-biodiversity/      # GBIF biodiversity sampling bias
-├── solar-seismic/          # Cross-project correlation (stub)
-├── earthquake-fx/          # Earthquake effects (stub)
-├── enso-river/             # ENSO–river flow correlation (stub)
 │
-├── tests/                  # Test suite (planned)
+├── tests/                  # pytest test suite (336 tests)
+├── pyproject.toml          # Package configuration + editable install
 ├── .gitignore
 └── README.md               # This file
 ```
@@ -73,7 +77,7 @@ Each tool follows a similar pattern:
 | **currency-contagion** | ECB, FRED, exchangerate.host | Foreign exchange crisis contagion networks |
 | **gbif-biodiversity** | GBIF | Biodiversity observation sampling bias |
 
-Three tools are stubs with minimal or no implementation: `solar-seismic`, `earthquake-fx`, `enso-river`.
+All tools use the shared library (`lib/`) for API clients, caching, formatting, statistics, and table generation.
 
 ## How Each Tool Works
 
@@ -87,8 +91,22 @@ Some tools combine these steps into a single script (e.g., `collect_and_analyze.
 ## Running Tests
 
 ```bash
-# (Test suite is being built — coming soon)
+# Install the shared library in editable mode
+pip install -e .
+
+# Run all tests
 pytest tests/
+
+# Run with verbose output
+pytest tests/ -v
+```
+
+## Makefile Targets
+
+```bash
+make test       # Run the test suite
+make lint       # Run linter (ruff)
+make check      # Run both tests and lint
 ```
 
 ## Provenance
