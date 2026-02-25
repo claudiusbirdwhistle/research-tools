@@ -1,61 +1,7 @@
 """Table formatting helpers for the State of Science report."""
 
-from lib.formatting import fmt_pct, fmt_num
-
-
-def fmt_change(val, decimals=1):
-    """Format a change value with +/- prefix."""
-    if val is None:
-        return "—"
-    sign = "+" if val > 0 else ""
-    return f"{sign}{val * 100:.{decimals}f}%"
-
-
-def md_table(headers, rows, alignments=None):
-    """Build a Markdown table from headers and rows.
-
-    Args:
-        headers: list of column header strings
-        rows: list of lists (each row is a list of cell values)
-        alignments: optional list of 'l', 'r', 'c' for each column
-
-    Returns:
-        Markdown table string
-    """
-    if not rows:
-        return ""
-
-    # Convert all cells to strings
-    str_rows = []
-    for row in rows:
-        str_rows.append([str(c) for c in row])
-
-    # Build header row
-    lines = []
-    lines.append("| " + " | ".join(headers) + " |")
-
-    # Build separator
-    if alignments is None:
-        alignments = ['l'] * len(headers)
-
-    seps = []
-    for a in alignments:
-        if a == 'r':
-            seps.append("---:")
-        elif a == 'c':
-            seps.append(":---:")
-        else:
-            seps.append("---")
-    lines.append("| " + " | ".join(seps) + " |")
-
-    # Build data rows
-    for row in str_rows:
-        # Pad row if needed
-        while len(row) < len(headers):
-            row.append("")
-        lines.append("| " + " | ".join(row[:len(headers)]) + " |")
-
-    return "\n".join(lines)
+from lib.formatting import fmt_pct, fmt_num, fmt_change
+from lib.tables import md_table
 
 
 def field_trends_table(fields, top_n=None):
