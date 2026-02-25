@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from collections import Counter
 
+from lib.formatting import fmt_pct, fmt_num
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 OUTPUT_DIR = Path("/output/research/attention-gap-analysis")
 
@@ -22,13 +24,6 @@ def load_data() -> dict:
         return json.load(f)
 
 
-def fmt_pct(v, digits=1) -> str:
-    """Format a fraction as percentage string."""
-    if v is None:
-        return "N/A"
-    return f"{v * 100:.{digits}f}%"
-
-
 def fmt_cagr(v) -> str:
     """Format CAGR as percentage with sign."""
     if v is None:
@@ -36,15 +31,6 @@ def fmt_cagr(v) -> str:
     pct = v * 100
     sign = "+" if pct >= 0 else ""
     return f"{sign}{pct:.1f}%"
-
-
-def fmt_num(v) -> str:
-    """Format number with commas."""
-    if v is None:
-        return "N/A"
-    if isinstance(v, float):
-        return f"{v:,.1f}"
-    return f"{v:,}"
 
 
 def fmt_gap(v) -> str:
