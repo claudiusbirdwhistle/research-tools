@@ -1,5 +1,7 @@
 """OpenAlex API client with caching, rate limiting, and pagination.
 
+Inherits HTTP handling, retry, and caching from BaseAPIClient.
+
 Usage:
     client = OpenAlexClient()
 
@@ -17,12 +19,9 @@ Usage:
     all_topics = client.get_all_pages("/topics", per_page=200)
 """
 
-import time
 import logging
-from urllib.parse import urlencode
 
-import httpx
-
+from lib.api_client import BaseAPIClient
 from lib.cache import ResponseCache
 from .models import GroupResult, Field, Topic, WorkSummary
 
@@ -31,46 +30,39 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://api.openalex.org"
 DEFAULT_DELAY = 0.1  # seconds between requests (100ms)
 DEFAULT_TIMEOUT = 30  # seconds
-MAX_RETRIES = 3
 POLITE_EMAIL = "autonomous-agent@research.local"
 
 
-class OpenAlexClient:
-    """Client for the OpenAlex API with caching and rate limiting."""
+class OpenAlexClient(BaseAPIClient):
+    """Client for the OpenAlex API with caching and rate limiting.
+
+    Inherits HTTP handling, retry, and caching from BaseAPIClient.
+
+    Args:
+        cache_path: Path to SQLite cache database.
+        delay: Minimum seconds between requests (default 0.1).
+        timeout: Request timeout in seconds (default 30).
+        **kwargs: Additional arguments passed to BaseAPIClient (e.g.
+            transport for testing).
+    """
 
     def __init__(
         self,
-        cache: ResponseCache | None = None,
+        cache_path=None,
         delay: float = DEFAULT_DELAY,
         timeout: float = DEFAULT_TIMEOUT,
+        **kwargs,
     ):
-        self.cache = cache or ResponseCache()
-        self.delay = delay
-        self.timeout = timeout
-        self._last_request_time = 0.0
-        self._request_count = 0
-        self._cache_hits = 0
-        self._http = httpx.Client(
+        cache = ResponseCache(db_path=cache_path or "data/openalex_cache.db")
+        super().__init__(
             base_url=BASE_URL,
+            cache=cache,
+            rate_limit_delay=delay,
             timeout=timeout,
-            headers={"User-Agent": f"SciTrends/1.0 (mailto:{POLITE_EMAIL})"},
+            max_retries=3,
+            user_agent=f"SciTrends/1.0 (mailto:{POLITE_EMAIL})",
+            **kwargs,
         )
-
-    def _rate_limit(self):
-        """Enforce minimum delay between requests."""
-        elapsed = time.time() - self._last_request_time
-        if elapsed < self.delay:
-            time.sleep(self.delay - elapsed)
-
-    def _build_url(self, endpoint: str, params: dict | None = None) -> str:
-        """Build full URL with query parameters."""
-        url = endpoint if endpoint.startswith("http") else f"{BASE_URL}{endpoint}"
-        if params:
-            # Filter out None values
-            clean = {k: v for k, v in params.items() if v is not None}
-            if clean:
-                url = f"{url}?{urlencode(clean)}"
-        return url
 
     def get(self, endpoint: str, params: dict | None = None, use_cache: bool = True) -> dict:
         """Make a GET request, using cache if available.
@@ -78,59 +70,7 @@ class OpenAlexClient:
         Returns the parsed JSON response dict.
         Raises httpx.HTTPStatusError on non-2xx responses after retries.
         """
-        url = self._build_url(endpoint, params)
-
-        # Check cache
-        if use_cache:
-            cached = self.cache.get(url)
-            if cached is not None:
-                self._cache_hits += 1
-                logger.debug("Cache hit: %s", url)
-                return cached
-
-        # Rate limit and fetch
-        self._rate_limit()
-
-        last_error = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = self._http.get(url)
-                self._last_request_time = time.time()
-                self._request_count += 1
-
-                if response.status_code == 429:
-                    # Rate limited — back off
-                    wait = 2 ** attempt * 5
-                    logger.warning("Rate limited on %s, waiting %ds", url, wait)
-                    time.sleep(wait)
-                    continue
-
-                response.raise_for_status()
-                data = response.json()
-
-                # Cache successful response
-                if use_cache:
-                    self.cache.put(url, data, response.status_code)
-
-                return data
-
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                if e.response.status_code >= 500:
-                    wait = 2 ** attempt * 2
-                    logger.warning("Server error %d on %s, retry in %ds",
-                                   e.response.status_code, url, wait)
-                    time.sleep(wait)
-                    continue
-                raise
-            except httpx.TimeoutException as e:
-                last_error = e
-                wait = 2 ** attempt * 2
-                logger.warning("Timeout on %s, retry in %ds", url, wait)
-                time.sleep(wait)
-                continue
-
-        raise last_error or RuntimeError(f"Failed after {MAX_RETRIES} retries: {url}")
+        return self.get_json(endpoint, params=params, use_cache=use_cache)
 
     def get_grouped(
         self,
@@ -212,9 +152,6 @@ class OpenAlexClient:
 
     def get_fields(self) -> list[Field]:
         """Fetch all top-level fields."""
-        # OpenAlex doesn't have a /fields endpoint — use /topics group_by or hardcoded
-        # Actually, fields are at /fields but let's use the concepts-like approach
-        # The real way: query /works group_by=primary_topic.field.id
         groups = self.get_grouped("/works", group_by="primary_topic.field.id")
         fields = []
         for g in groups:
@@ -285,23 +222,3 @@ class OpenAlexClient:
                 authors=authors,
             ))
         return works
-
-    def stats(self) -> dict:
-        """Return client usage statistics."""
-        cache_stats = self.cache.stats()
-        return {
-            "requests_made": self._request_count,
-            "cache_hits": self._cache_hits,
-            "total_calls": self._request_count + self._cache_hits,
-            **cache_stats,
-        }
-
-    def close(self):
-        self._http.close()
-        self.cache.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()
