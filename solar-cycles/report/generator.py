@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 
+from lib.formatting import fmt, sign
+
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "analysis"
 OUTPUT_DIR = Path("/output/research/solar-cycles")
@@ -25,20 +27,6 @@ def load_data():
         else:
             files[name] = None
     return files
-
-
-def fmt(x, decimals=1):
-    """Format number, handling None."""
-    if x is None:
-        return "—"
-    return f"{x:.{decimals}f}"
-
-
-def sign(x):
-    """Format with sign."""
-    if x is None:
-        return "—"
-    return f"+{x:.1f}" if x >= 0 else f"{x:.1f}"
 
 
 def generate_report():
@@ -442,7 +430,7 @@ def generate_report():
     w(f"For the {n_overlap}-month overlap period "
       f"({fmt(pred['overlap_period']['start'], 2)}–{fmt(pred['overlap_period']['end'], 2)}):")
     w("")
-    w(f"- **Bias**: {sign(skill['bias'])} SSN (predictions slightly {'high' if skill['bias'] > 0 else 'low'})")
+    w(f"- **Bias**: {sign(skill['bias'], 1)} SSN (predictions slightly {'high' if skill['bias'] > 0 else 'low'})")
     w(f"- **RMSE**: {fmt(skill['rmse'], 1)} SSN")
     w(f"- **MAE**: {fmt(skill['mae'], 1)} SSN")
     w(f"- **Confidence interval containment**: {fmt(skill['ci_containment'] * 100, 0)}% "
