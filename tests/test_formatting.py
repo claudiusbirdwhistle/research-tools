@@ -15,7 +15,7 @@ import math
 
 import pytest
 
-from lib.formatting import fmt, sign, p_str, stars, fmt_pct, fmt_num
+from lib.formatting import fmt, sign, p_str, stars, fmt_pct, fmt_num, fmt_change
 
 
 # ── fmt() tests ──────────────────────────────────────────────────────────
@@ -266,3 +266,35 @@ class TestFmtNum:
 
     def test_float_zero(self):
         assert fmt_num(0.0) == "0.0"
+
+
+# ── fmt_change() tests ──────────────────────────────────────────────────
+
+class TestFmtChange:
+    """Format a change value as signed percentage (0-1 scale → ×100)."""
+
+    def test_positive_change(self):
+        assert fmt_change(0.15) == "+15.0%"
+
+    def test_negative_change(self):
+        assert fmt_change(-0.08) == "-8.0%"
+
+    def test_zero_change(self):
+        """Zero should not get a + prefix."""
+        result = fmt_change(0.0)
+        assert result == "0.0%"
+
+    def test_custom_decimals(self):
+        assert fmt_change(0.12345, 2) == "+12.35%"
+
+    def test_none_returns_dash(self):
+        assert fmt_change(None) == "\u2014"
+
+    def test_small_positive(self):
+        assert fmt_change(0.003, 1) == "+0.3%"
+
+    def test_large_change(self):
+        assert fmt_change(1.5) == "+150.0%"
+
+    def test_very_small_negative(self):
+        assert fmt_change(-0.001, 2) == "-0.10%"
