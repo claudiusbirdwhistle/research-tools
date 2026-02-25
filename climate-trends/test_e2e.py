@@ -8,7 +8,7 @@ sys.path.insert(0, "/tools/climate-trends")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-from climate.cache import ResponseCache
+from lib.cache import ResponseCache
 from climate.cities import City, get_cities, get_city_batches, get_continents, get_climate_zones
 from climate.client import OpenMeteoClient
 

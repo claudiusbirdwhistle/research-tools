@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "research-engine"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from climate.cache import ResponseCache
+from lib.cache import ResponseCache
 from climate.cities import City, get_cities
 from climate.client import OpenMeteoClient
 

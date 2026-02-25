@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from .cache import ResponseCache
+from lib.cache import ResponseCache
 from .cities import City
 
 logger = logging.getLogger(__name__)
