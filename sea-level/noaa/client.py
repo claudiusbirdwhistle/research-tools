@@ -1,8 +1,13 @@
-"""NOAA CO-OPS API client for tide gauge data."""
+"""NOAA CO-OPS API client for tide gauge data.
 
-import json
-import time
-import httpx
+Uses BaseAPIClient for HTTP handling, caching, and retry logic.
+
+Endpoints:
+  - Station list: /mdapi/prod/webapi/stations.json
+  - Data getter: /api/prod/datagetter (monthly mean sea level, etc.)
+"""
+
+from lib.api_client import BaseAPIClient
 from lib.cache import ResponseCache
 
 BASE_URL = "https://api.tidesandcurrents.noaa.gov"
@@ -10,46 +15,33 @@ STATION_LIST_URL = f"{BASE_URL}/mdapi/prod/webapi/stations.json"
 DATA_URL = f"{BASE_URL}/api/prod/datagetter"
 
 
-class NOAAClient:
-    def __init__(self, cache_path=None, request_delay=0.2):
-        self.cache = ResponseCache(db_path=cache_path)
-        self.delay = request_delay
-        self.http = None
-        self.requests_made = 0
-        self.cache_hits = 0
+class NOAAClient(BaseAPIClient):
+    """Client for the NOAA CO-OPS Tides and Currents API.
 
-    def __enter__(self):
-        self.cache.__enter__()
-        self.http = httpx.Client(timeout=60, follow_redirects=True)
-        return self
+    Inherits HTTP handling, caching, and retry from BaseAPIClient.
 
-    def __exit__(self, *args):
-        if self.http:
-            self.http.close()
-        self.cache.__exit__(*args)
+    Args:
+        cache_path: Path to SQLite cache database. If None, uses default.
+        request_delay: Minimum seconds between requests (default 0.2).
+        **kwargs: Additional arguments passed to BaseAPIClient (e.g.
+            transport for testing).
+    """
 
-    def _get(self, url, params=None):
-        key = ResponseCache.make_key(url, params)
-        cached = self.cache.get(key)
-        if cached is not None:
-            self.cache_hits += 1
-            return cached
-
-        time.sleep(self.delay)
-        resp = self.http.get(url, params=params)
-        resp.raise_for_status()
-        text = resp.text
-        self.cache.put(key, text, resp.status_code)
-        self.requests_made += 1
-        return text
+    def __init__(self, cache_path=None, request_delay=0.2, **kwargs):
+        cache = ResponseCache(db_path=cache_path)
+        super().__init__(
+            base_url=BASE_URL,
+            cache=cache,
+            rate_limit_delay=request_delay,
+            user_agent="SeaLevel/1.0 (autonomous-agent@research.local)",
+            **kwargs,
+        )
 
     def get_stations(self):
         """Get list of all water level stations."""
         params = {"type": "waterlevels"}
-        text = self._get(STATION_LIST_URL, params)
-        data = json.loads(text)
-        stations = data.get("stations", [])
-        return stations
+        data = self.get_json(STATION_LIST_URL, params=params)
+        return data.get("stations", [])
 
     def get_monthly_mean(self, station_id, begin_date="19000101", end_date="20241231"):
         """Get monthly mean water level data for a station.
@@ -67,17 +59,9 @@ class NOAAClient:
             "format": "json",
             "application": "sea_level_analysis",
         }
-        text = self._get(DATA_URL, params)
-        data = json.loads(text)
+        data = self.get_json(DATA_URL, params=params)
 
         if "error" in data:
             return []
 
         return data.get("data", [])
-
-    def stats(self):
-        return {
-            "requests_made": self.requests_made,
-            "cache_hits": self.cache_hits,
-            "cache": self.cache.stats(),
-        }
