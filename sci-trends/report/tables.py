@@ -1,20 +1,6 @@
 """Table formatting helpers for the State of Science report."""
 
-
-def fmt_pct(val, decimals=1):
-    """Format a decimal as a percentage string."""
-    if val is None:
-        return "—"
-    return f"{val * 100:.{decimals}f}%"
-
-
-def fmt_num(val):
-    """Format a number with comma separators."""
-    if val is None:
-        return "—"
-    if isinstance(val, float):
-        return f"{val:,.1f}"
-    return f"{val:,}"
+from lib.formatting import fmt_pct, fmt_num
 
 
 def fmt_change(val, decimals=1):
