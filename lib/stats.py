@@ -38,15 +38,17 @@ def mann_kendall(data: np.ndarray) -> dict:
             tau: Kendall's tau correlation coefficient [-1, 1].
             p_value: Two-tailed p-value.
             significant: True if p_value < 0.05.
+            S: Raw S statistic (sum of concordant minus discordant pairs).
+            z: Normal approximation z-score (with continuity correction).
 
     Examples:
         >>> mann_kendall(np.arange(10.0))
-        {'tau': 1.0, 'p_value': 0.0, 'significant': True}
+        {'tau': 1.0, 'p_value': 0.0, 'significant': True, 'S': 45, 'z': ...}
     """
     data = np.asarray(data, dtype=float)
     n = len(data)
     if n < 4:
-        return {"tau": 0, "p_value": 1, "significant": False}
+        return {"tau": 0, "p_value": 1, "significant": False, "S": 0, "z": 0.0}
 
     # Compute S statistic: sum of sgn(x_j - x_i) for all i < j
     s = 0
@@ -86,6 +88,8 @@ def mann_kendall(data: np.ndarray) -> dict:
         "tau": round(tau, 4),
         "p_value": round(p_value, 8),
         "significant": p_value < 0.05,
+        "S": int(s),
+        "z": round(z, 6),
     }
 
 

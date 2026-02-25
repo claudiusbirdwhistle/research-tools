@@ -96,6 +96,19 @@ class TestMannKendall:
         result = mann_kendall(NOISY_VALUES)
         assert -1 <= result["tau"] <= 1
 
+    def test_returns_z_score(self):
+        """Result should include z-score for callers that need it."""
+        result = mann_kendall(MONOTONIC_VALUES)
+        assert "z" in result
+        assert result["z"] > 0  # positive trend → positive z
+
+    def test_returns_S_statistic(self):
+        """Result should include the raw S statistic."""
+        result = mann_kendall(MONOTONIC_VALUES)
+        assert "S" in result
+        assert isinstance(result["S"], int)
+        assert result["S"] > 0  # all concordant pairs
+
 
 # ── Sen's slope tests ────────────────────────────────────────────────────
 
