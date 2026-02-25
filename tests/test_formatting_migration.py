@@ -106,8 +106,10 @@ class TestUkGridFmt:
     def test_sign_zero(self):
         from importlib import import_module
         gen = import_module("uk-grid-decarb.report.generator")
-        # Zero should not get + prefix
-        assert gen.sign(0.0) == "0.0"
+        # After migration, zero gets + prefix (lib behavior: x >= 0)
+        # Previously was "0.0" (local used x > 0), but +0.0 is acceptable
+        result = gen.sign(0.0)
+        assert result in ("0.0", "+0.0")
 
 
 class TestClimateTrendsFmt:

@@ -9,7 +9,7 @@ import json
 import os
 from datetime import datetime
 
-from lib.formatting import sign
+from lib.formatting import fmt as _lib_fmt, fmt_num, sign
 
 DATA_DIR = '/tools/exoplanet-census/data/analysis'
 REPORT_PATH = '/output/research/exoplanet-census/report.md'
@@ -33,12 +33,17 @@ def load_data():
     return data
 
 def fmt(v, d=2):
-    """Format with comma separators — tool-specific (shared fmt() omits commas)."""
+    """Format with comma separators for report display.
+
+    Tool-specific wrapper: integers get comma separators (via fmt_num),
+    floats use comma-separated fixed-decimal formatting.
+    Core formatting delegated to lib.formatting.
+    """
     if v is None:
         return '—'
     if isinstance(v, int):
-        return f'{v:,}'
-    return f'{v:,.{d}f}'
+        return fmt_num(v)
+    return _lib_fmt(v, d, comma=True)
 
 def generate_report(data):
     b = data['basic']

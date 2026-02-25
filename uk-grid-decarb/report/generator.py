@@ -7,7 +7,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from lib.formatting import p_str
+from lib.formatting import fmt as _lib_fmt, sign as _lib_sign, p_str
 
 ANALYSIS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'analysis')
 OUTPUT_DIR = '/output/research/uk-grid-decarb'
@@ -20,20 +20,24 @@ def load_json(name):
 
 
 def fmt(val, decimals=1):
-    """Format a number with fixed decimals. Returns 'N/A' for None, preserves int formatting."""
+    """Format a number with fixed decimals (tool-default: 1).
+
+    Returns 'N/A' for None, preserves int formatting (no decimals).
+    Core formatting delegated to lib.formatting.fmt.
+    """
     if val is None:
         return 'N/A'
     if isinstance(val, int):
         return str(val)
-    return f'{val:.{decimals}f}'
+    return _lib_fmt(val, decimals)
 
 
 def sign(val, decimals=1):
-    """Format a number with explicit +/- sign prefix."""
-    s = fmt(val, decimals)
-    if val > 0:
-        return f'+{s}'
-    return s
+    """Format with +/- sign prefix (tool-default: 1 decimal).
+
+    Delegates to lib.formatting.sign.
+    """
+    return _lib_sign(val, decimals)
 
 
 def _find_corr(key_corrs, fuel1, fuel2):

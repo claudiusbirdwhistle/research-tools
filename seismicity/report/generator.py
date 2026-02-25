@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-from lib.formatting import sign
+from lib.formatting import fmt as _lib_fmt, fmt_num, sign
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 ANALYSIS_DIR = DATA_DIR / "analysis"
@@ -32,17 +32,22 @@ def load_results():
 
 
 def fmt(n, decimals=1):
-    """Format number with comma separators — tool-specific (shared fmt() omits commas)."""
+    """Format number with comma separators for report display.
+
+    Tool-specific wrapper: integers get comma separators (via fmt_num),
+    large floats get 0 decimals, small floats use specified decimals.
+    Core formatting delegated to lib.formatting.
+    """
     if n is None:
         return "N/A"
     if isinstance(n, str):
         return n
+    if isinstance(n, int):
+        return fmt_num(n)
     if isinstance(n, float):
         if abs(n) >= 1000:
-            return f"{n:,.0f}"
-        return f"{n:,.{decimals}f}"
-    if isinstance(n, int):
-        return f"{n:,}"
+            return _lib_fmt(n, 0, comma=True)
+        return _lib_fmt(n, decimals, comma=True)
     return str(n)
 
 
