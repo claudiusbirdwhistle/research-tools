@@ -120,13 +120,7 @@ async def run_ingestion(store, config, ing_config):
 
                         from edgar_sentinel.core.models import Filing
                         f = Filing(
-                            accession_number=filing.accession_number,
-                            cik=filing.cik,
-                            ticker=ticker,
-                            company_name=getattr(filing, "company_name", ticker),
-                            form_type=filing.form_type,
-                            filed_date=filing.filed_date,
-                            url=getattr(filing, "url", ""),
+                            metadata=filing,
                             sections=sections,
                         )
                         await store.save_filing(f)
