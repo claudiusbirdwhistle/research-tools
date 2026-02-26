@@ -469,6 +469,69 @@ async def run_backtest(store, config, bt_config, all_composites):
             "equalWeight": pt.ew_value,
         })
 
+    # Build portfolioHistory: per-rebalance snapshot with positions and dollar values
+    portfolio_history = []
+    portfolio_value = 10_000.0  # starting account value
+    snapshots = engine.portfolio_history.snapshots
+    for snapshot, mr in zip(snapshots, result.monthly_returns):
+        positions_list = []
+        for pos in snapshot.positions:
+            leg = "long" if pos.weight >= 0 else "short"
+            dollar_value = round(portfolio_value * abs(pos.weight), 2)
+            positions_list.append({
+                "ticker": pos.ticker,
+                "weight": round(pos.weight, 6),
+                "quantile": pos.quantile,
+                "signalScore": round(pos.signal_score, 4),
+                "leg": leg,
+                "dollarValue": dollar_value,
+            })
+        portfolio_history.append({
+            "rebalanceDate": snapshot.rebalance_date.isoformat()
+                if hasattr(snapshot.rebalance_date, "isoformat")
+                else str(snapshot.rebalance_date),
+            "portfolioValue": round(portfolio_value, 2),
+            "turnover": round(snapshot.turnover, 4),
+            "transactionCost": round(snapshot.transaction_cost, 6),
+            "positions": positions_list,
+            "nLong": snapshot.n_long,
+            "nShort": snapshot.n_short,
+        })
+        # Advance portfolio value to the next period using net return
+        # For long-only: long_return minus transaction_cost
+        # For long-short: long_short_return already includes transaction cost
+        if mr.long_short_return is not None:
+            period_net = mr.long_short_return
+        else:
+            period_net = mr.long_return - snapshot.transaction_cost
+        portfolio_value *= (1.0 + period_net)
+
+    # Build signalHistory: per-date composite scores for all tickers
+    from collections import defaultdict
+    signal_by_date: dict = defaultdict(list)
+    for c in composites:
+        date_str = c.signal_date.isoformat() if hasattr(c.signal_date, "isoformat") else str(c.signal_date)
+        signal_by_date[date_str].append(c)
+
+    signal_history = []
+    for date_str in sorted(signal_by_date.keys()):
+        tickers_on_date = sorted(
+            signal_by_date[date_str],
+            key=lambda c: c.composite_score,
+            reverse=True,
+        )
+        signal_history.append({
+            "date": date_str,
+            "signals": [
+                {
+                    "ticker": c.ticker,
+                    "compositeScore": c.composite_score,
+                    "rank": i + 1,
+                }
+                for i, c in enumerate(tickers_on_date)
+            ],
+        })
+
     return {
         "strategy": {
             "totalReturn": result.total_return,
@@ -483,6 +546,8 @@ async def run_backtest(store, config, bt_config, all_composites):
         "monthlyReturns": monthly,
         "signalRankings": rankings,
         "equityCurve": equity_curve,
+        "portfolioHistory": portfolio_history,
+        "signalHistory": signal_history,
     }
 
 
