@@ -1,0 +1,566 @@
+#!/usr/bin/env python3
+"""
+EDGAR Sentinel Pipeline Runner
+
+Executes the full pipeline (ingestion -> analysis -> signals -> backtest)
+with progress tracking. Called by the Express dashboard backend.
+
+Usage: python3 edgar-sentinel-runner.py <job_dir>
+
+The job_dir must contain:
+  - config.json: Pipeline configuration from the frontend
+  - status.json: Initial job status (created by Express)
+
+The script updates status.json as it progresses through stages and writes
+final results including benchmark comparisons.
+"""
+
+import asyncio
+import json
+import os
+import sys
+import traceback
+from datetime import date, datetime
+from pathlib import Path
+
+# Add edgar-sentinel to path
+EDGAR_DIR = Path("/agent/edgar-sentinel")
+sys.path.insert(0, str(EDGAR_DIR / "src"))
+
+
+def update_status(job_dir: Path, updates: dict):
+    """Atomically update the job status file."""
+    status_path = job_dir / "status.json"
+    status = json.loads(status_path.read_text())
+    status.update(updates)
+    tmp = status_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(status, indent=2))
+    tmp.rename(status_path)
+
+
+def update_stage(job_dir: Path, stage_name: str, stage_updates: dict):
+    """Update a specific stage within the status."""
+    status_path = job_dir / "status.json"
+    status = json.loads(status_path.read_text())
+    for s in status["stages"]:
+        if s["stage"] == stage_name:
+            s.update(stage_updates)
+            break
+    tmp = status_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(status, indent=2))
+    tmp.rename(status_path)
+
+
+async def run_ingestion(store, config, ing_config):
+    """Stage 1: Ingest SEC filings from EDGAR."""
+    from edgar_sentinel.ingestion.client import EdgarClient
+
+    tickers = [t.strip().upper() for t in ing_config["tickers"].split(",") if t.strip()]
+    form_type = ing_config.get("formType", "both")
+    start_year = ing_config.get("startYear", 2024)
+    end_year = ing_config.get("endYear", 2026)
+
+    form_types = []
+    if form_type in ("10-K", "both"):
+        form_types.append("10-K")
+    if form_type in ("10-Q", "both"):
+        form_types.append("10-Q")
+
+    edgar_config_dict = {
+        "user_agent": "EdgarSentinel research@example.com",
+        "rate_limit": 8,
+        "cache_dir": str(EDGAR_DIR / "data" / "filings"),
+        "request_timeout": 30,
+    }
+
+    # Try to load from edgar-sentinel.yml
+    yml_path = EDGAR_DIR / "edgar-sentinel.yml"
+    if yml_path.exists():
+        try:
+            import yaml
+            with open(yml_path) as f:
+                yml = yaml.safe_load(f)
+            if yml and "edgar" in yml:
+                edgar_config_dict.update(yml["edgar"])
+        except ImportError:
+            pass
+
+    from edgar_sentinel.core.config import EdgarConfig
+    edgar_cfg = EdgarConfig(**edgar_config_dict)
+
+    total_filings = 0
+    async with EdgarClient(edgar_cfg) as client:
+        for ticker in tickers:
+            try:
+                cik = await client.resolve_ticker(ticker)
+                filings = await client.get_filings(cik, form_types)
+
+                for filing in filings:
+                    filed_date = filing.filed_date
+                    if hasattr(filed_date, "year"):
+                        if filed_date.year < start_year or filed_date.year > end_year:
+                            continue
+                    else:
+                        # String date
+                        year = int(str(filed_date)[:4])
+                        if year < start_year or year > end_year:
+                            continue
+
+                    # Check if already ingested
+                    existing = await store.get_filing(filing.accession_number)
+                    if existing:
+                        total_filings += 1
+                        continue
+
+                    # Fetch and parse
+                    try:
+                        html = await client.get_filing_html(filing.accession_number)
+                        from edgar_sentinel.ingestion.parser import FilingParser
+                        parser = FilingParser()
+                        sections = parser.parse(html, filing.form_type)
+
+                        # Save filing
+                        from edgar_sentinel.core.models import Filing
+                        f = Filing(
+                            accession_number=filing.accession_number,
+                            cik=cik,
+                            ticker=ticker,
+                            company_name=getattr(filing, "company_name", ticker),
+                            form_type=filing.form_type,
+                            filed_date=filing.filed_date,
+                            url=getattr(filing, "url", ""),
+                            sections=sections,
+                        )
+                        await store.save_filing(f)
+                        total_filings += 1
+                    except Exception as e:
+                        print(f"Warning: Failed to fetch {ticker} {filing.accession_number}: {e}", file=sys.stderr)
+            except Exception as e:
+                print(f"Warning: Failed to process {ticker}: {e}", file=sys.stderr)
+
+    return {"filings_count": total_filings, "tickers": tickers}
+
+
+async def run_analysis(store, config, ana_config):
+    """Stage 2: Run sentiment and similarity analyzers."""
+    results_count = 0
+
+    filings = await store.list_filings()
+
+    if ana_config.get("dictionary", True):
+        from edgar_sentinel.analyzers.dictionary import DictionaryAnalyzer
+        try:
+            dict_cfg_dict = {"enabled": True}
+            lm_path = EDGAR_DIR / "data" / "lm_dictionary.csv"
+            if lm_path.exists():
+                dict_cfg_dict["dictionary_path"] = str(lm_path)
+
+            from edgar_sentinel.core.config import DictionaryAnalyzerConfig
+            dict_cfg = DictionaryAnalyzerConfig(**dict_cfg_dict)
+            analyzer = DictionaryAnalyzer(dict_cfg)
+
+            for filing in filings:
+                for section in getattr(filing, "sections", []):
+                    try:
+                        existing = await store.get_sentiments(
+                            filing.accession_number,
+                            section_name=section.section_name,
+                            analyzer_name="dictionary"
+                        )
+                        if existing:
+                            results_count += 1
+                            continue
+
+                        result = analyzer.analyze(section)
+                        if result:
+                            await store.save_sentiment(result)
+                            results_count += 1
+                    except Exception as e:
+                        print(f"Warning: Dict analysis failed: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: Dictionary analyzer init failed: {e}", file=sys.stderr)
+
+    if ana_config.get("similarity", True):
+        from edgar_sentinel.analyzers.similarity import SimilarityAnalyzer
+        try:
+            from edgar_sentinel.core.config import SimilarityAnalyzerConfig
+            sim_cfg = SimilarityAnalyzerConfig(enabled=True)
+            sim_analyzer = SimilarityAnalyzer(sim_cfg)
+
+            # Group filings by ticker and form type for sequential comparison
+            from collections import defaultdict
+            grouped = defaultdict(list)
+            for filing in filings:
+                key = (filing.ticker, filing.form_type)
+                grouped[key].append(filing)
+
+            for key, group in grouped.items():
+                group.sort(key=lambda f: str(f.filed_date))
+                for i in range(1, len(group)):
+                    current = group[i]
+                    prior = group[i - 1]
+                    for section in getattr(current, "sections", []):
+                        prior_section = None
+                        for ps in getattr(prior, "sections", []):
+                            if ps.section_name == section.section_name:
+                                prior_section = ps
+                                break
+                        if prior_section:
+                            try:
+                                existing = await store.get_similarity(
+                                    current.accession_number,
+                                    section_name=section.section_name
+                                )
+                                if existing:
+                                    results_count += 1
+                                    continue
+                                result = sim_analyzer.analyze(section, prior_section)
+                                if result:
+                                    await store.save_similarity(result)
+                                    results_count += 1
+                            except Exception as e:
+                                print(f"Warning: Similarity analysis failed: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: Similarity analyzer init failed: {e}", file=sys.stderr)
+
+    return {"analysis_results": results_count}
+
+
+async def run_signals(store, config, sig_config, bt_config):
+    """Stage 3: Generate composite signals for each rebalance date."""
+    from edgar_sentinel.signals.builder import SignalBuilder, FilingDateMapping
+    from edgar_sentinel.signals.composite import SignalComposite
+    from edgar_sentinel.backtest.portfolio import generate_rebalance_dates
+
+    buffer_days = sig_config.get("bufferDays", 2)
+    half_life = sig_config.get("decayHalfLife", 90)
+    method = sig_config.get("compositeMethod", "equal")
+
+    start_str = f"{bt_config.get('startYear', config['ingestion']['startYear'])}-01-01"
+    end_str = f"{bt_config.get('endYear', config['ingestion']['endYear'])}-12-31"
+    start = date.fromisoformat(start_str) if isinstance(start_str, str) else start_str
+    end = date.fromisoformat(end_str) if isinstance(end_str, str) else end_str
+
+    # Use backtest date range
+    bt_start = bt_config.get("startDate", start_str)
+    bt_end = bt_config.get("endDate", end_str)
+    if isinstance(bt_start, str):
+        bt_start = date.fromisoformat(bt_start)
+    if isinstance(bt_end, str):
+        bt_end = date.fromisoformat(bt_end)
+
+    freq = bt_config.get("rebalanceFrequency", "quarterly")
+    rebalance_dates = generate_rebalance_dates(bt_start, bt_end, freq)
+
+    from edgar_sentinel.core.config import SignalsConfig
+    from edgar_sentinel.core.models import CompositeMethod
+    method_enum = CompositeMethod.EQUAL
+    if method == "ic_weighted":
+        method_enum = CompositeMethod.IC_WEIGHTED
+
+    sig_cfg = SignalsConfig(
+        buffer_days=buffer_days,
+        decay_half_life=half_life,
+        composite_method=method_enum,
+    )
+
+    builder = SignalBuilder(sig_cfg)
+    composite = SignalComposite(method=method_enum)
+
+    # Collect all analysis data once (outside rebalance loop) for efficiency.
+    # store.get_sentiments/get_similarity require a filing_id, so we iterate
+    # over all filings and aggregate.
+    all_filings_meta = await store.list_filings()
+    all_sentiments = []
+    all_similarities = []
+    from datetime import timedelta
+    filing_dates = {}
+    for f in all_filings_meta:
+        fd = f.filed_date
+        if isinstance(fd, str):
+            fd = date.fromisoformat(fd)
+        filing_dates[f.accession_number] = FilingDateMapping(
+            ticker=f.ticker,
+            filing_id=f.accession_number,
+            filed_date=fd,
+            signal_date=fd + timedelta(days=buffer_days),
+        )
+        sents = await store.get_sentiments(f.accession_number)
+        all_sentiments.extend(sents)
+        sims = await store.get_similarity(f.accession_number)
+        all_similarities.extend(sims)
+
+    from edgar_sentinel.analyzers.base import AnalysisResults
+    results = AnalysisResults(
+        sentiment_results=all_sentiments,
+        similarity_results=all_similarities,
+    )
+
+    total_signals = 0
+    all_composites = []
+
+    for as_of in rebalance_dates:
+        signals = builder.build(results, filing_dates, as_of_date=as_of)
+        composites = composite.combine(signals, as_of_date=as_of)
+
+        for c in composites:
+            await store.save_composite(c)
+            all_composites.append(c)
+            total_signals += 1
+
+    return {"signals_generated": total_signals, "rebalance_dates": len(rebalance_dates), "composites": all_composites}
+
+
+async def run_backtest(store, config, bt_config, all_composites):
+    """Stage 4: Run backtest with benchmark comparisons."""
+    from edgar_sentinel.backtest.engine import BacktestEngine
+    from edgar_sentinel.backtest.returns import YFinanceProvider
+    from edgar_sentinel.backtest.metrics import MetricsCalculator
+
+    tickers = [t.strip().upper() for t in config["ingestion"]["tickers"].split(",") if t.strip()]
+
+    start_str = f"{config['ingestion']['startYear']}-01-01"
+    end_str = f"{config['ingestion']['endYear']}-12-31"
+    start = date.fromisoformat(start_str)
+    end = date.today() if date.fromisoformat(end_str) > date.today() else date.fromisoformat(end_str)
+
+    from edgar_sentinel.core.config import BacktestConfig, RebalanceFrequency
+
+    freq = RebalanceFrequency.QUARTERLY
+    if bt_config.get("rebalanceFrequency") == "monthly":
+        freq = RebalanceFrequency.MONTHLY
+
+    bt_cfg = BacktestConfig(
+        start_date=start,
+        end_date=end,
+        universe=tickers,
+        rebalance_frequency=freq,
+        num_quantiles=bt_config.get("numQuantiles", 5),
+        signal_buffer_days=config.get("signals", {}).get("bufferDays", 2),
+        long_quantile=bt_config.get("longQuantile", 1),
+        short_quantile=bt_config.get("shortQuantile"),
+        transaction_cost_bps=bt_config.get("transactionCostBps", 10),
+    )
+
+    db_path = str(EDGAR_DIR / "data" / "edgar_sentinel.db")
+    provider = YFinanceProvider(cache_db_path=db_path)
+    metrics_calc = MetricsCalculator()
+
+    engine = BacktestEngine(
+        config=bt_cfg,
+        returns_provider=provider,
+        metrics_calculator=metrics_calc,
+    )
+
+    # Get composites from store
+    composites = all_composites
+    if not composites:
+        composites = await store.get_composites()
+
+    result = engine.run(signals=composites)
+
+    # Compute benchmarks
+    benchmarks = await compute_benchmarks(provider, tickers, start, end)
+
+    # Build monthly returns comparison
+    monthly = []
+    for mr in getattr(result, "monthly_returns", []):
+        month_str = mr.month if isinstance(mr.month, str) else mr.month.strftime("%Y-%m")
+        spy_ret = benchmarks["spy_monthly"].get(month_str, 0)
+        ew_ret = benchmarks["ew_monthly"].get(month_str, 0)
+        strat_ret = mr.return_value if hasattr(mr, "return_value") else getattr(mr, "strategy_return", 0)
+        monthly.append({
+            "month": month_str,
+            "strategy": strat_ret,
+            "spy": spy_ret,
+            "equalWeight": ew_ret,
+        })
+
+    # Build signal rankings (latest quarter)
+    rankings = []
+    if composites:
+        latest_date = max(c.signal_date for c in composites)
+        latest = sorted(
+            [c for c in composites if c.signal_date == latest_date],
+            key=lambda c: c.composite_score,
+            reverse=True,
+        )
+        for i, c in enumerate(latest, 1):
+            rankings.append({
+                "ticker": c.ticker,
+                "compositeScore": c.composite_score,
+                "rank": i,
+            })
+
+    return {
+        "strategy": {
+            "totalReturn": result.total_return,
+            "annualizedReturn": result.annualized_return,
+            "sharpeRatio": result.sharpe_ratio,
+            "sortinoRatio": getattr(result, "sortino_ratio", 0),
+            "maxDrawdown": result.max_drawdown,
+            "winRate": getattr(result, "win_rate", 0),
+            "informationCoefficient": getattr(result, "information_ratio", 0),
+        },
+        "benchmarks": benchmarks["summary"],
+        "monthlyReturns": monthly,
+        "signalRankings": rankings,
+    }
+
+
+async def compute_benchmarks(provider, tickers, start, end):
+    """Compute SPY and equal-weight buy-and-hold benchmarks."""
+    import pandas as pd
+
+    spy_monthly = {}
+    ew_monthly = {}
+    spy_summary = {"totalReturn": 0, "annualizedReturn": 0, "sharpeRatio": 0}
+    ew_summary = {"totalReturn": 0, "annualizedReturn": 0, "sharpeRatio": 0}
+
+    try:
+        # SPY benchmark
+        spy_returns = provider.get_returns(["SPY"], start, end, frequency="monthly")
+        if spy_returns is not None and not spy_returns.empty and "SPY" in spy_returns.columns:
+            spy_series = spy_returns["SPY"].dropna()
+            for idx, val in spy_series.items():
+                month_str = idx.strftime("%Y-%m") if hasattr(idx, "strftime") else str(idx)[:7]
+                spy_monthly[month_str] = float(val)
+
+            total = float((1 + spy_series).prod() - 1)
+            years = max((end - start).days / 365.25, 0.01)
+            annualized = (1 + total) ** (1 / years) - 1
+            sharpe = float(spy_series.mean() / spy_series.std() * (12 ** 0.5)) if spy_series.std() > 0 else 0
+            spy_summary = {"totalReturn": total, "annualizedReturn": annualized, "sharpeRatio": sharpe}
+
+        # Equal-weight benchmark
+        ew_returns_df = provider.get_returns(tickers, start, end, frequency="monthly")
+        if ew_returns_df is not None and not ew_returns_df.empty:
+            available = [t for t in tickers if t in ew_returns_df.columns]
+            if available:
+                ew_series = ew_returns_df[available].mean(axis=1).dropna()
+                for idx, val in ew_series.items():
+                    month_str = idx.strftime("%Y-%m") if hasattr(idx, "strftime") else str(idx)[:7]
+                    ew_monthly[month_str] = float(val)
+
+                total = float((1 + ew_series).prod() - 1)
+                years = max((end - start).days / 365.25, 0.01)
+                annualized = (1 + total) ** (1 / years) - 1
+                sharpe = float(ew_series.mean() / ew_series.std() * (12 ** 0.5)) if ew_series.std() > 0 else 0
+                ew_summary = {"totalReturn": total, "annualizedReturn": annualized, "sharpeRatio": sharpe}
+    except Exception as e:
+        print(f"Warning: Benchmark computation error: {e}", file=sys.stderr)
+
+    return {
+        "summary": {
+            "spy": spy_summary,
+            "equalWeight": ew_summary,
+        },
+        "spy_monthly": spy_monthly,
+        "ew_monthly": ew_monthly,
+    }
+
+
+async def main():
+    if len(sys.argv) < 2:
+        print("Usage: edgar-sentinel-runner.py <job_dir>", file=sys.stderr)
+        sys.exit(1)
+
+    job_dir = Path(sys.argv[1])
+    config = json.loads((job_dir / "config.json").read_text())
+
+    # Update status to running
+    update_status(job_dir, {"status": "running", "currentStage": "ingestion"})
+
+    # Initialize store
+    from edgar_sentinel.ingestion.store import SqliteStore
+    from edgar_sentinel.core.config import StorageConfig
+
+    db_path = str(EDGAR_DIR / "data" / "edgar_sentinel.db")
+    store_cfg = StorageConfig(sqlite_path=db_path)
+    store = SqliteStore(store_cfg)
+    await store.initialize()
+
+    try:
+        # Stage 1: Ingestion
+        update_stage(job_dir, "ingestion", {"status": "running"})
+        update_status(job_dir, {"currentStage": "ingestion"})
+        ing_result = await run_ingestion(store, config, config["ingestion"])
+        update_stage(job_dir, "ingestion", {
+            "status": "completed",
+            "summary": f"Ingested {ing_result['filings_count']} filings for {len(ing_result['tickers'])} tickers",
+            "detail": ing_result,
+        })
+
+        # Stage 2: Analysis
+        update_stage(job_dir, "analysis", {"status": "running"})
+        update_status(job_dir, {"currentStage": "analysis"})
+        ana_result = await run_analysis(store, config, config["analysis"])
+        update_stage(job_dir, "analysis", {
+            "status": "completed",
+            "summary": f"Generated {ana_result['analysis_results']} analysis results",
+            "detail": ana_result,
+        })
+
+        # Stage 3: Signals
+        update_stage(job_dir, "signals", {"status": "running"})
+        update_status(job_dir, {"currentStage": "signals"})
+
+        # Build backtest config for signal generation
+        tickers = [t.strip().upper() for t in config["ingestion"]["tickers"].split(",") if t.strip()]
+        start_str = f"{config['ingestion']['startYear']}-01-01"
+        end_str = f"{config['ingestion']['endYear']}-12-31"
+        bt_config_for_signals = {
+            "startDate": start_str,
+            "endDate": end_str,
+            "rebalanceFrequency": config["backtest"].get("rebalanceFrequency", "quarterly"),
+        }
+        sig_result = await run_signals(store, config, config["signals"], bt_config_for_signals)
+        update_stage(job_dir, "signals", {
+            "status": "completed",
+            "summary": f"Generated {sig_result['signals_generated']} signals across {sig_result['rebalance_dates']} rebalance dates",
+            "detail": {"signals_generated": sig_result["signals_generated"], "rebalance_dates": sig_result["rebalance_dates"]},
+        })
+
+        # Stage 4: Backtest
+        update_stage(job_dir, "backtest", {"status": "running"})
+        update_status(job_dir, {"currentStage": "backtest"})
+        bt_result = await run_backtest(store, config, config["backtest"], sig_result.get("composites", []))
+        update_stage(job_dir, "backtest", {
+            "status": "completed",
+            "summary": f"Backtest complete — Sharpe: {bt_result['strategy']['sharpeRatio']:.3f}, Return: {bt_result['strategy']['totalReturn']:.1%}",
+        })
+
+        # Final status
+        update_status(job_dir, {
+            "status": "completed",
+            "currentStage": "complete",
+            "results": bt_result,
+            "completedAt": datetime.utcnow().isoformat() + "Z",
+        })
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(tb, file=sys.stderr)
+
+        # Find which stage failed
+        status = json.loads((job_dir / "status.json").read_text())
+        for s in status["stages"]:
+            if s["status"] == "running":
+                update_stage(job_dir, s["stage"], {
+                    "status": "failed",
+                    "error": str(e),
+                })
+                break
+
+        update_status(job_dir, {
+            "status": "failed",
+            "error": str(e),
+            "completedAt": datetime.utcnow().isoformat() + "Z",
+        })
+        sys.exit(1)
+    finally:
+        await store.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
