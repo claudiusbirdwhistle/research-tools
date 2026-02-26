@@ -324,7 +324,7 @@ async def run_backtest(store, config, bt_config, all_composites):
     start = date.fromisoformat(start_str)
     end = date.today() if date.fromisoformat(end_str) > date.today() else date.fromisoformat(end_str)
 
-    from edgar_sentinel.core.config import BacktestConfig, RebalanceFrequency
+    from edgar_sentinel.core.models import BacktestConfig, RebalanceFrequency
 
     freq = RebalanceFrequency.QUARTERLY
     if bt_config.get("rebalanceFrequency") == "monthly":
@@ -365,10 +365,10 @@ async def run_backtest(store, config, bt_config, all_composites):
     # Build monthly returns comparison
     monthly = []
     for mr in getattr(result, "monthly_returns", []):
-        month_str = mr.month if isinstance(mr.month, str) else mr.month.strftime("%Y-%m")
+        month_str = mr.period_end.strftime("%Y-%m") if hasattr(mr.period_end, "strftime") else str(mr.period_end)[:7]
         spy_ret = benchmarks["spy_monthly"].get(month_str, 0)
         ew_ret = benchmarks["ew_monthly"].get(month_str, 0)
-        strat_ret = mr.return_value if hasattr(mr, "return_value") else getattr(mr, "strategy_return", 0)
+        strat_ret = mr.long_return
         monthly.append({
             "month": month_str,
             "strategy": strat_ret,
