@@ -54,6 +54,7 @@ def update_stage(job_dir: Path, stage_name: str, stage_updates: dict):
 async def run_ingestion(store, config, ing_config):
     """Stage 1: Ingest SEC filings from EDGAR."""
     from edgar_sentinel.ingestion.client import EdgarClient
+    from edgar_sentinel.core.models import FormType
 
     tickers = [t.strip().upper() for t in ing_config["tickers"].split(",") if t.strip()]
     form_type = ing_config.get("formType", "both")
@@ -62,9 +63,9 @@ async def run_ingestion(store, config, ing_config):
 
     form_types = []
     if form_type in ("10-K", "both"):
-        form_types.append("10-K")
+        form_types.append(FormType("10-K"))
     if form_type in ("10-Q", "both"):
-        form_types.append("10-Q")
+        form_types.append(FormType("10-Q"))
 
     edgar_config_dict = {
         "user_agent": "EdgarSentinel research@example.com",
@@ -88,38 +89,35 @@ async def run_ingestion(store, config, ing_config):
     from edgar_sentinel.core.config import EdgarConfig
     edgar_cfg = EdgarConfig(**edgar_config_dict)
 
-    total_filings = 0
+    new_fetched = 0
+    from_cache = 0
+    failures = []
+    ticker_results = {}
+
     async with EdgarClient(edgar_cfg) as client:
         for ticker in tickers:
+            ticker_new = 0
+            ticker_cached = 0
             try:
-                cik = await client.resolve_ticker(ticker)
-                filings = await client.get_filings(cik, form_types)
+                start_date = date(start_year, 1, 1)
+                end_date = date(end_year, 12, 31)
+                filings = await client.get_filings_for_ticker(ticker, form_types, start_date, end_date)
 
                 for filing in filings:
-                    filed_date = filing.filed_date
-                    if hasattr(filed_date, "year"):
-                        if filed_date.year < start_year or filed_date.year > end_year:
-                            continue
-                    else:
-                        # String date
-                        year = int(str(filed_date)[:4])
-                        if year < start_year or year > end_year:
-                            continue
-
                     # Check if already ingested
                     existing = await store.get_filing(filing.accession_number)
                     if existing:
-                        total_filings += 1
+                        from_cache += 1
+                        ticker_cached += 1
                         continue
 
                     # Fetch and parse
                     try:
-                        html = await client.get_filing_html(filing.accession_number)
+                        html = await client.get_filing_document(filing.url)
                         from edgar_sentinel.ingestion.parser import FilingParser
                         parser = FilingParser()
                         sections = parser.parse(html, filing.form_type)
 
-                        # Save filing
                         from edgar_sentinel.core.models import Filing
                         f = Filing(
                             accession_number=filing.accession_number,
@@ -132,20 +130,65 @@ async def run_ingestion(store, config, ing_config):
                             sections=sections,
                         )
                         await store.save_filing(f)
-                        total_filings += 1
+                        new_fetched += 1
+                        ticker_new += 1
                     except Exception as e:
+                        failures.append(f"{ticker}/{filing.accession_number}: {e}")
                         print(f"Warning: Failed to fetch {ticker} {filing.accession_number}: {e}", file=sys.stderr)
             except Exception as e:
+                failures.append(f"{ticker}: {e}")
                 print(f"Warning: Failed to process {ticker}: {e}", file=sys.stderr)
 
-    return {"filings_count": total_filings, "tickers": tickers}
+            ticker_results[ticker] = {"new": ticker_new, "cached": ticker_cached}
+
+    # Query DB for total count in the configured scope
+    from edgar_sentinel.ingestion.store import SqliteStore as _S
+    total_in_db = 0
+    try:
+        all_meta = await store.list_filings()
+        # Filter to tickers in config
+        ticker_set = set(tickers)
+        total_in_db = sum(1 for fm in all_meta if fm.ticker in ticker_set)
+    except Exception:
+        pass
+
+    total_via_api = new_fetched + from_cache
+    return {
+        "filings_count": total_via_api,
+        "new_fetched": new_fetched,
+        "from_cache": from_cache,
+        "total_in_db": total_in_db,
+        "tickers": tickers,
+        "ticker_results": ticker_results,
+        "failures": len(failures),
+        "failure_details": failures[:10],  # first 10 only
+    }
 
 
 async def run_analysis(store, config, ana_config):
-    """Stage 2: Run sentiment and similarity analyzers."""
-    results_count = 0
+    """Stage 2: Run sentiment and similarity analyzers.
 
-    filings = await store.list_filings()
+    list_filings() returns FilingMetadata (no sections). We load full Filing
+    objects so we can iterate their sections.
+    """
+    new_sentiment = 0
+    cached_sentiment = 0
+    new_similarity = 0
+    cached_similarity = 0
+
+    # Load metadata list first, then fetch full Filing objects with sections
+    filing_metas = await store.list_filings()
+
+    # Load full filings (with sections) for all metadata entries.
+    # Loaded lazily per-filing to avoid holding all HTML in memory at once.
+    full_filings = {}
+    for fm in filing_metas:
+        try:
+            filing = await store.get_filing(fm.accession_number)
+            if filing and filing.sections:
+                full_filings[fm.accession_number] = filing
+        except Exception as e:
+            print(f"Warning: Could not load filing {fm.accession_number}: {e}", file=sys.stderr)
 
     if ana_config.get("dictionary", True):
         from edgar_sentinel.analyzers.dictionary import DictionaryAnalyzer
@@ -159,22 +202,23 @@ async def run_analysis(store, config, ana_config):
             dict_cfg = DictionaryAnalyzerConfig(**dict_cfg_dict)
             analyzer = DictionaryAnalyzer(dict_cfg)
 
-            for filing in filings:
-                for section in getattr(filing, "sections", []):
+            for acc_num, filing in full_filings.items():
+                # filing.sections is dict[SectionName, FilingSection]
+                for section in filing.sections.values():
                     try:
                         existing = await store.get_sentiments(
-                            filing.accession_number,
+                            acc_num,
                             section_name=section.section_name,
                             analyzer_name="dictionary"
                         )
                         if existing:
-                            results_count += 1
+                            cached_sentiment += 1
                             continue
 
                         result = analyzer.analyze(section)
                         if result:
                             await store.save_sentiment(result)
-                            results_count += 1
+                            new_sentiment += 1
                     except Exception as e:
                         print(f"Warning: Dict analysis failed: {e}", file=sys.stderr)
         except Exception as e:
@@ -187,43 +231,47 @@ async def run_analysis(store, config, ana_config):
             sim_cfg = SimilarityAnalyzerConfig(enabled=True)
             sim_analyzer = SimilarityAnalyzer(sim_cfg)
 
-            # Group filings by ticker and form type for sequential comparison
+            # Group full filings by ticker and form type for sequential comparison
             from collections import defaultdict
             grouped = defaultdict(list)
-            for filing in filings:
-                key = (filing.ticker, filing.form_type)
+            for acc_num, filing in full_filings.items():
+                key = (filing.metadata.ticker, filing.metadata.form_type)
                 grouped[key].append(filing)
 
             for key, group in grouped.items():
-                group.sort(key=lambda f: str(f.filed_date))
+                group.sort(key=lambda f: str(f.metadata.filed_date))
                 for i in range(1, len(group)):
                     current = group[i]
                     prior = group[i - 1]
-                    for section in getattr(current, "sections", []):
-                        prior_section = None
-                        for ps in getattr(prior, "sections", []):
-                            if ps.section_name == section.section_name:
-                                prior_section = ps
-                                break
+                    for section in current.sections.values():
+                        prior_section = prior.sections.get(section.section_name)
                         if prior_section:
                             try:
                                 existing = await store.get_similarity(
-                                    current.accession_number,
+                                    current.metadata.accession_number,
                                     section_name=section.section_name
                                 )
                                 if existing:
-                                    results_count += 1
+                                    cached_similarity += 1
                                     continue
                                 result = sim_analyzer.analyze(section, prior_section)
                                 if result:
                                     await store.save_similarity(result)
-                                    results_count += 1
+                                    new_similarity += 1
                             except Exception as e:
                                 print(f"Warning: Similarity analysis failed: {e}", file=sys.stderr)
         except Exception as e:
             print(f"Warning: Similarity analyzer init failed: {e}", file=sys.stderr)
 
-    return {"analysis_results": results_count}
+    total = new_sentiment + cached_sentiment + new_similarity + cached_similarity
+    return {
+        "analysis_results": total,
+        "new_sentiment": new_sentiment,
+        "cached_sentiment": cached_sentiment,
+        "new_similarity": new_similarity,
+        "cached_similarity": cached_similarity,
+        "filings_with_sections": len(full_filings),
+    }
 
 
 async def run_signals(store, config, sig_config, bt_config):
@@ -485,9 +533,25 @@ async def main():
         update_stage(job_dir, "ingestion", {"status": "running"})
         update_status(job_dir, {"currentStage": "ingestion"})
         ing_result = await run_ingestion(store, config, config["ingestion"])
+        ing_new = ing_result["new_fetched"]
+        ing_cached = ing_result["from_cache"]
+        ing_total_db = ing_result["total_in_db"]
+        ing_failures = ing_result["failures"]
+        if ing_new > 0 or ing_cached > 0:
+            ing_summary = (
+                f"{ing_new} new + {ing_cached} cached filings fetched via EDGAR API "
+                f"({ing_total_db} total in DB for {len(ing_result['tickers'])} tickers)"
+            )
+        else:
+            ing_summary = (
+                f"EDGAR API returned 0 filings via API "
+                f"({ing_total_db} available in DB for {len(ing_result['tickers'])} tickers"
+                + (f", {ing_failures} fetch failures" if ing_failures else "")
+                + ")"
+            )
         update_stage(job_dir, "ingestion", {
             "status": "completed",
-            "summary": f"Ingested {ing_result['filings_count']} filings for {len(ing_result['tickers'])} tickers",
+            "summary": ing_summary,
             "detail": ing_result,
         })
 
@@ -495,9 +559,15 @@ async def main():
         update_stage(job_dir, "analysis", {"status": "running"})
         update_status(job_dir, {"currentStage": "analysis"})
         ana_result = await run_analysis(store, config, config["analysis"])
+        ana_new = ana_result["new_sentiment"] + ana_result["new_similarity"]
+        ana_cached = ana_result["cached_sentiment"] + ana_result["cached_similarity"]
+        ana_summary = (
+            f"{ana_new} new + {ana_cached} cached analysis results "
+            f"({ana_result['filings_with_sections']} filings with sections)"
+        )
         update_stage(job_dir, "analysis", {
             "status": "completed",
-            "summary": f"Generated {ana_result['analysis_results']} analysis results",
+            "summary": ana_summary,
             "detail": ana_result,
         })
 
