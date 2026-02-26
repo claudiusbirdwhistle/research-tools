@@ -459,6 +459,16 @@ async def run_backtest(store, config, bt_config, all_composites):
                 "rank": i,
             })
 
+    # Build equity curve: daily portfolio/SPY/EW values starting at $10,000
+    equity_curve = []
+    for pt in getattr(result, "equity_curve", []):
+        equity_curve.append({
+            "date": pt.date.isoformat() if hasattr(pt.date, "isoformat") else str(pt.date),
+            "portfolio": pt.portfolio_value,
+            "spy": pt.spy_value,
+            "equalWeight": pt.ew_value,
+        })
+
     return {
         "strategy": {
             "totalReturn": result.total_return,
@@ -472,6 +482,7 @@ async def run_backtest(store, config, bt_config, all_composites):
         "benchmarks": benchmarks["summary"],
         "monthlyReturns": monthly,
         "signalRankings": rankings,
+        "equityCurve": equity_curve,
     }
 
 
