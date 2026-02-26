@@ -312,7 +312,11 @@ async def run_signals(store, config, sig_config, bt_config):
     # Collect all analysis data once (outside rebalance loop) for efficiency.
     # store.get_sentiments/get_similarity require a filing_id, so we iterate
     # over all filings and aggregate.
-    all_filings_meta = await store.list_filings()
+    # IMPORTANT: Filter to only the selected tickers so that stale data from
+    # previous runs with different universe configurations is excluded.
+    selected_tickers = {t.strip().upper() for t in config["ingestion"]["tickers"].split(",") if t.strip()}
+    all_filings_meta_unfiltered = await store.list_filings()
+    all_filings_meta = [f for f in all_filings_meta_unfiltered if f.ticker.upper() in selected_tickers]
     all_sentiments = []
     all_similarities = []
     from datetime import timedelta
@@ -416,10 +420,13 @@ async def run_backtest(store, config, bt_config, all_composites):
         returns_provider=provider,
     )
 
-    # Get composites from store
-    composites = all_composites
+    # Get composites, filtering to only selected tickers to avoid pollution
+    # from previous runs with different universe configurations.
+    ticker_set = set(tickers)
+    composites = [c for c in all_composites if c.ticker.upper() in ticker_set]
     if not composites:
-        composites = await store.get_composites()
+        all_db_composites = await store.get_composites()
+        composites = [c for c in all_db_composites if c.ticker.upper() in ticker_set]
 
     result = engine.run(signals=composites)
 
