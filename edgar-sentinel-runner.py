@@ -116,12 +116,12 @@ async def run_ingestion(store, config, ing_config):
                         html = await client.get_filing_document(filing.url)
                         from edgar_sentinel.ingestion.parser import FilingParser
                         parser = FilingParser()
-                        sections = parser.parse(html, filing.form_type)
+                        sections = parser.parse(html, filing.form_type, filing.accession_number)
 
                         from edgar_sentinel.core.models import Filing
                         f = Filing(
                             accession_number=filing.accession_number,
-                            cik=cik,
+                            cik=filing.cik,
                             ticker=ticker,
                             company_name=getattr(filing, "company_name", ticker),
                             form_type=filing.form_type,
