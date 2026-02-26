@@ -353,11 +353,34 @@ async def run_signals(store, config, sig_config, bt_config):
     return {"signals_generated": total_signals, "rebalance_dates": len(rebalance_dates), "composites": all_composites}
 
 
+def _compound_period_return(monthly_map: dict, period_start, period_end) -> float:
+    """Compound monthly benchmark returns over a holding period (period_start, period_end].
+
+    For quarterly rebalancing, compounds 3 monthly returns rather than
+    looking up just the endpoint month. Falls back to single-month lookup
+    when period_start is None.
+    """
+    import pandas as pd
+
+    if period_start is None:
+        month_str = period_end.strftime("%Y-%m") if hasattr(period_end, "strftime") else str(period_end)[:7]
+        return monthly_map.get(month_str, 0.0)
+
+    compound = 1.0
+    start_ts = pd.Timestamp(period_start)
+    end_ts = pd.Timestamp(period_end)
+    month_dates = pd.date_range(start=start_ts, end=end_ts, freq="ME")
+    for dt in month_dates:
+        month_str = dt.strftime("%Y-%m")
+        r = monthly_map.get(month_str, 0.0)
+        compound *= (1 + r)
+    return compound - 1.0
+
+
 async def run_backtest(store, config, bt_config, all_composites):
     """Stage 4: Run backtest with benchmark comparisons."""
     from edgar_sentinel.backtest.engine import BacktestEngine
     from edgar_sentinel.backtest.returns import YFinanceProvider
-    from edgar_sentinel.backtest.metrics import MetricsCalculator
 
     tickers = [t.strip().upper() for t in config["ingestion"]["tickers"].split(",") if t.strip()]
 
@@ -386,12 +409,11 @@ async def run_backtest(store, config, bt_config, all_composites):
 
     db_path = str(EDGAR_DIR / "data" / "edgar_sentinel.db")
     provider = YFinanceProvider(cache_db_path=db_path)
-    metrics_calc = MetricsCalculator()
-
+    # BacktestEngine auto-configures MetricsCalculator annualization_factor
+    # from config.rebalance_frequency — no need to pass explicit MetricsCalculator
     engine = BacktestEngine(
         config=bt_cfg,
         returns_provider=provider,
-        metrics_calculator=metrics_calc,
     )
 
     # Get composites from store
@@ -404,12 +426,15 @@ async def run_backtest(store, config, bt_config, all_composites):
     # Compute benchmarks
     benchmarks = await compute_benchmarks(provider, tickers, start, end)
 
-    # Build monthly returns comparison
+    # Build period returns comparison (correctly compounded over the full holding period)
     monthly = []
     for mr in getattr(result, "monthly_returns", []):
-        month_str = mr.period_end.strftime("%Y-%m") if hasattr(mr.period_end, "strftime") else str(mr.period_end)[:7]
-        spy_ret = benchmarks["spy_monthly"].get(month_str, 0)
-        ew_ret = benchmarks["ew_monthly"].get(month_str, 0)
+        period_end_val = mr.period_end
+        period_start_val = mr.period_start  # Now populated from engine
+        month_str = period_end_val.strftime("%Y-%m") if hasattr(period_end_val, "strftime") else str(period_end_val)[:7]
+        # Compound benchmark returns over the full holding period, not just endpoint month
+        spy_ret = _compound_period_return(benchmarks["spy_monthly"], period_start_val, period_end_val)
+        ew_ret = _compound_period_return(benchmarks["ew_monthly"], period_start_val, period_end_val)
         strat_ret = mr.long_return
         monthly.append({
             "month": month_str,
