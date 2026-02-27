@@ -432,6 +432,7 @@ async def run_backtest(store, config, bt_config, all_composites):
     """Stage 4: Run backtest with benchmark comparisons."""
     from edgar_sentinel.backtest.engine import BacktestEngine
     from edgar_sentinel.backtest.returns import YFinanceProvider
+    from edgar_sentinel.backtest.universe import Sp500HistoricalProvider, StaticUniverseProvider
 
     tickers = [t.strip().upper() for t in config["ingestion"]["tickers"].split(",") if t.strip()]
 
@@ -440,11 +441,18 @@ async def run_backtest(store, config, bt_config, all_composites):
     start = date.fromisoformat(start_str)
     end = date.today() if date.fromisoformat(end_str) > date.today() else date.fromisoformat(end_str)
 
-    from edgar_sentinel.core.models import BacktestConfig, RebalanceFrequency
+    from edgar_sentinel.core.models import BacktestConfig, RebalanceFrequency, UniverseSource
 
     freq = RebalanceFrequency.QUARTERLY
     if bt_config.get("rebalanceFrequency") == "monthly":
         freq = RebalanceFrequency.MONTHLY
+
+    universe_source_str = bt_config.get("universeSource", "static")
+    universe_source = (
+        UniverseSource.SP500_HISTORICAL
+        if universe_source_str == "sp500_historical"
+        else UniverseSource.STATIC
+    )
 
     bt_cfg = BacktestConfig(
         start_date=start,
@@ -456,7 +464,14 @@ async def run_backtest(store, config, bt_config, all_composites):
         long_quantile=bt_config.get("longQuantile", 1),
         short_quantile=bt_config.get("shortQuantile"),
         transaction_cost_bps=bt_config.get("transactionCostBps", 10),
+        universe_source=universe_source,
     )
+
+    # Build the appropriate universe provider for survivorship-bias control
+    if universe_source == UniverseSource.SP500_HISTORICAL:
+        universe_provider = Sp500HistoricalProvider()
+    else:
+        universe_provider = StaticUniverseProvider(tickers)
 
     db_path = str(EDGAR_DIR / "data" / "edgar_sentinel.db")
     provider = YFinanceProvider(cache_db_path=db_path)
@@ -465,6 +480,7 @@ async def run_backtest(store, config, bt_config, all_composites):
     engine = BacktestEngine(
         config=bt_cfg,
         returns_provider=provider,
+        universe_provider=universe_provider,
     )
 
     # Get composites, filtering to only selected tickers to avoid pollution
@@ -605,6 +621,89 @@ async def run_backtest(store, config, bt_config, all_composites):
     }
 
 
+async def run_validation(config, composites, tickers, start, end):
+    """Stage 5: Run statistical validation suite on signal scores.
+
+    Builds signal_df from composites and returns_df from daily prices,
+    then runs the full validation pipeline.
+    """
+    import pandas as pd
+    from edgar_sentinel.signal_validation import run_full_validation
+
+    db_path = str(EDGAR_DIR / "data" / "edgar_sentinel.db")
+
+    # Build signal_df from composites
+    signal_rows = []
+    for c in composites:
+        # Extract sentiment and similarity sub-scores from components
+        sim_vals = [v for k, v in c.components.items() if "similarity" in k.lower()]
+        sent_vals = [v for k, v in c.components.items() if "dictionary" in k.lower() or "sentiment" in k.lower()]
+        similarity_score = sum(sim_vals) / len(sim_vals) if sim_vals else 0.0
+        sentiment_score = sum(sent_vals) / len(sent_vals) if sent_vals else 0.0
+        signal_rows.append({
+            "entity_id": c.ticker,
+            "filing_date": c.signal_date,
+            "similarity_score": similarity_score,
+            "sentiment_score": sentiment_score,
+            "composite_score": c.composite_score,
+        })
+
+    if not signal_rows:
+        return {"error": "No composites available for validation", "skipped": True}
+
+    signal_df = pd.DataFrame(signal_rows)
+
+    # Get daily returns for all tickers
+    from edgar_sentinel.backtest.returns import YFinanceProvider
+    provider = YFinanceProvider(cache_db_path=db_path)
+    daily_returns = provider.get_returns(tickers, start, end, frequency="daily")
+
+    if daily_returns is None or daily_returns.empty:
+        return {"error": "Could not fetch daily returns for validation", "skipped": True}
+
+    # Build returns_df with monthly forward-looking horizons
+    # Trading-day approximations: 1m≈21d, 2m≈42d, 3m≈63d, 6m≈126d, 9m≈189d, 12m≈252d
+    HORIZON_DAYS = {"ret_1m": 21, "ret_2m": 42, "ret_3m": 63, "ret_6m": 126, "ret_9m": 189, "ret_12m": 252}
+    returns_rows = []
+    for ticker in tickers:
+        if ticker not in daily_returns.columns:
+            continue
+        series = daily_returns[ticker].dropna()
+        n = len(series)
+        for idx in series.index:
+            pos = series.index.get_loc(idx)
+            row = {
+                "entity_id": ticker,
+                "date": idx.date() if hasattr(idx, "date") else idx,
+            }
+            for col, days in HORIZON_DAYS.items():
+                row[col] = float((1 + series.iloc[pos:pos+days]).prod() - 1) if pos + days <= n else None
+            returns_rows.append(row)
+
+    if not returns_rows:
+        return {"error": "No returns data available for validation", "skipped": True}
+
+    returns_df = pd.DataFrame(returns_rows).dropna(subset=["ret_1m"])
+
+    # Run validation with reduced permutations for speed
+    try:
+        results = run_full_validation(
+            signal_df=signal_df,
+            returns_df=returns_df,
+            signal_col="composite_score",
+            return_horizons=["ret_1m", "ret_2m", "ret_3m", "ret_6m", "ret_9m", "ret_12m"],
+            n_quantiles=min(5, len(set(signal_df["entity_id"]))),
+            n_placebo_permutations=50,
+            oos_strategy="expanding",
+        )
+        result_dict = results.to_dict()
+        result_dict["summary_text"] = results.summary()
+        result_dict["skipped"] = False
+        return result_dict
+    except Exception as e:
+        return {"error": str(e), "skipped": True, "summary_text": f"Validation failed: {e}"}
+
+
 async def compute_benchmarks(provider, tickers, start, end):
     """Compute SPY and equal-weight buy-and-hold benchmarks."""
     import pandas as pd
@@ -743,11 +842,34 @@ async def main():
         # Stage 4: Backtest
         update_stage(job_dir, "backtest", {"status": "running"})
         update_status(job_dir, {"currentStage": "backtest"})
-        bt_result = await run_backtest(store, config, config["backtest"], sig_result.get("composites", []))
+        all_composites = sig_result.get("composites", [])
+        bt_result = await run_backtest(store, config, config["backtest"], all_composites)
         update_stage(job_dir, "backtest", {
             "status": "completed",
             "summary": f"Backtest complete — Sharpe: {bt_result['strategy']['sharpeRatio']:.3f}, Return: {bt_result['strategy']['totalReturn']:.1%}",
         })
+
+        # Stage 5: Signal Validation
+        update_stage(job_dir, "validation", {"status": "running"})
+        update_status(job_dir, {"currentStage": "validation"})
+        start_dt = date.fromisoformat(f"{config['ingestion']['startYear']}-01-01")
+        end_dt = date.today() if date.fromisoformat(f"{config['ingestion']['endYear']}-12-31") > date.today() else date.fromisoformat(f"{config['ingestion']['endYear']}-12-31")
+        val_result = await run_validation(config, all_composites, tickers, start_dt, end_dt)
+        if val_result.get("skipped"):
+            update_stage(job_dir, "validation", {
+                "status": "completed",
+                "summary": f"Skipped: {val_result.get('error', 'insufficient data')}",
+                "detail": val_result,
+            })
+        else:
+            n_tests = len(val_result.get("ols_results", {})) + len(val_result.get("ic_results", {})) + len(val_result.get("portfolio_sort_results", {}))
+            update_stage(job_dir, "validation", {
+                "status": "completed",
+                "summary": f"Validation complete — {n_tests} test results across return horizons",
+                "detail": {"tests_run": n_tests},
+            })
+
+        bt_result["signalValidation"] = val_result
 
         # Final status
         update_status(job_dir, {
