@@ -432,7 +432,12 @@ async def run_backtest(store, config, bt_config, all_composites):
     """Stage 4: Run backtest with benchmark comparisons."""
     from edgar_sentinel.backtest.engine import BacktestEngine
     from edgar_sentinel.backtest.returns import YFinanceProvider
-    from edgar_sentinel.backtest.universe import Sp500HistoricalProvider, StaticUniverseProvider
+    from edgar_sentinel.backtest.universe import (
+        Sp100HistoricalProvider,
+        Sp500HistoricalProvider,
+        Sp50HistoricalProvider,
+        StaticUniverseProvider,
+    )
 
     tickers = [t.strip().upper() for t in config["ingestion"]["tickers"].split(",") if t.strip()]
 
@@ -448,11 +453,12 @@ async def run_backtest(store, config, bt_config, all_composites):
         freq = RebalanceFrequency.MONTHLY
 
     universe_source_str = bt_config.get("universeSource", "static")
-    universe_source = (
-        UniverseSource.SP500_HISTORICAL
-        if universe_source_str == "sp500_historical"
-        else UniverseSource.STATIC
-    )
+    _SOURCE_MAP = {
+        "sp500_historical": UniverseSource.SP500_HISTORICAL,
+        "sp100_historical": UniverseSource.SP100_HISTORICAL,
+        "sp50_historical": UniverseSource.SP50_HISTORICAL,
+    }
+    universe_source = _SOURCE_MAP.get(universe_source_str, UniverseSource.STATIC)
 
     bt_cfg = BacktestConfig(
         start_date=start,
@@ -470,6 +476,10 @@ async def run_backtest(store, config, bt_config, all_composites):
     # Build the appropriate universe provider for survivorship-bias control
     if universe_source == UniverseSource.SP500_HISTORICAL:
         universe_provider = Sp500HistoricalProvider()
+    elif universe_source == UniverseSource.SP100_HISTORICAL:
+        universe_provider = Sp100HistoricalProvider()
+    elif universe_source == UniverseSource.SP50_HISTORICAL:
+        universe_provider = Sp50HistoricalProvider()
     else:
         universe_provider = StaticUniverseProvider(tickers)
 
