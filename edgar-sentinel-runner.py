@@ -52,7 +52,15 @@ def update_stage(job_dir: Path, stage_name: str, stage_updates: dict):
 
 
 async def run_ingestion(store, config, ing_config):
-    """Stage 1: Ingest SEC filings from EDGAR."""
+    """Stage 1: Ingest SEC filings from EDGAR.
+
+    Performance notes:
+    - Pre-loads the full set of known accession numbers in one DB query so
+      each per-filing existence check is an O(1) in-memory set lookup rather
+      than a round-trip that loads the full filing + all sections.
+    - Processes tickers concurrently (up to 8 at once) so EDGAR API calls
+      and file-cache reads overlap, subject to the AsyncLimiter rate cap.
+    """
     from edgar_sentinel.ingestion.client import EdgarClient
     from edgar_sentinel.core.models import FormType
 
@@ -89,29 +97,40 @@ async def run_ingestion(store, config, ing_config):
     from edgar_sentinel.core.config import EdgarConfig
     edgar_cfg = EdgarConfig(**edgar_config_dict)
 
+    # Pre-load the set of already-ingested accession numbers in one query.
+    # This avoids N individual get_filing() calls (which load all sections).
+    existing_accessions = await store.get_filing_accession_numbers(tickers)
+
     new_fetched = 0
     from_cache = 0
     failures = []
     ticker_results = {}
 
-    async with EdgarClient(edgar_cfg) as client:
-        for ticker in tickers:
-            ticker_new = 0
-            ticker_cached = 0
+    # Semaphore limits concurrent EDGAR coroutines to avoid overwhelming
+    # the rate limiter queue when many tickers are processed in parallel.
+    _CONCURRENCY = 8
+    sem = asyncio.Semaphore(_CONCURRENCY)
+    results_lock = asyncio.Lock()
+
+    async def process_ticker(ticker, client):
+        nonlocal new_fetched, from_cache
+        ticker_new = 0
+        ticker_cached = 0
+        ticker_failures = []
+
+        async with sem:
             try:
                 start_date = date(start_year, 1, 1)
                 end_date = date(end_year, 12, 31)
                 filings = await client.get_filings_for_ticker(ticker, form_types, start_date, end_date)
 
                 for filing in filings:
-                    # Check if already ingested
-                    existing = await store.get_filing(filing.accession_number)
-                    if existing:
-                        from_cache += 1
+                    # O(1) set lookup — much cheaper than loading full Filing
+                    if filing.accession_number in existing_accessions:
                         ticker_cached += 1
                         continue
 
-                    # Fetch and parse
+                    # Fetch and parse (document may still come from file cache)
                     try:
                         html = await client.get_filing_document(filing.url)
                         from edgar_sentinel.ingestion.parser import FilingParser
@@ -119,32 +138,33 @@ async def run_ingestion(store, config, ing_config):
                         sections = parser.parse(html, filing.form_type, filing.accession_number)
 
                         from edgar_sentinel.core.models import Filing
-                        f = Filing(
-                            metadata=filing,
-                            sections=sections,
-                        )
+                        f = Filing(metadata=filing, sections=sections)
                         await store.save_filing(f)
-                        new_fetched += 1
+                        # Track in existing set so sibling tasks don't re-fetch
+                        existing_accessions.add(filing.accession_number)
                         ticker_new += 1
                     except Exception as e:
-                        failures.append(f"{ticker}/{filing.accession_number}: {e}")
-                        print(f"Warning: Failed to fetch {ticker} {filing.accession_number}: {e}", file=sys.stderr)
+                        ticker_failures.append(f"{ticker}/{filing.accession_number}: {e}")
+                        print(
+                            f"Warning: Failed to fetch {ticker} {filing.accession_number}: {e}",
+                            file=sys.stderr,
+                        )
             except Exception as e:
-                failures.append(f"{ticker}: {e}")
+                ticker_failures.append(f"{ticker}: {e}")
                 print(f"Warning: Failed to process {ticker}: {e}", file=sys.stderr)
 
+        async with results_lock:
+            new_fetched += ticker_new
+            from_cache += ticker_cached
+            failures.extend(ticker_failures)
             ticker_results[ticker] = {"new": ticker_new, "cached": ticker_cached}
 
-    # Query DB for total count in the configured scope
-    from edgar_sentinel.ingestion.store import SqliteStore as _S
-    total_in_db = 0
-    try:
-        all_meta = await store.list_filings()
-        # Filter to tickers in config
-        ticker_set = set(tickers)
-        total_in_db = sum(1 for fm in all_meta if fm.ticker in ticker_set)
-    except Exception:
-        pass
+    async with EdgarClient(edgar_cfg) as client:
+        tasks = [process_ticker(ticker, client) for ticker in tickers]
+        await asyncio.gather(*tasks)
+
+    # Total in DB for configured tickers (fast: reuse existing_accessions set)
+    total_in_db = len(existing_accessions)
 
     total_via_api = new_fetched + from_cache
     return {
@@ -162,19 +182,35 @@ async def run_ingestion(store, config, ing_config):
 async def run_analysis(store, config, ana_config):
     """Stage 2: Run sentiment and similarity analyzers.
 
-    list_filings() returns FilingMetadata (no sections). We load full Filing
-    objects so we can iterate their sections.
+    Performance notes:
+    - Filters list_filings() to configured tickers so prior runs with a
+      different universe do not inflate the workload.
+    - Pre-loads all existing sentiment/similarity keys in two bulk queries
+      (one per result type) rather than one DB query per section per filing.
+    - Accumulates new results in memory and batch-saves with a single commit
+      instead of committing after every single row.
     """
     new_sentiment = 0
     cached_sentiment = 0
     new_similarity = 0
     cached_similarity = 0
 
-    # Load metadata list first, then fetch full Filing objects with sections
-    filing_metas = await store.list_filings()
+    # Filter to tickers in config when available; otherwise process all DB filings.
+    # The ticker filter avoids mixing in stale data from prior runs with a
+    # different universe — this is the common production path.
+    ingestion_cfg = config.get("ingestion", {}) if isinstance(config, dict) else {}
+    ingestion_tickers_str = ingestion_cfg.get("tickers", "") if ingestion_cfg else ""
+    if ingestion_tickers_str:
+        tickers = [t.strip().upper() for t in ingestion_tickers_str.split(",") if t.strip()]
+        filing_metas = []
+        for ticker in tickers:
+            metas = await store.list_filings(ticker=ticker)
+            filing_metas.extend(metas)
+    else:
+        # Fallback: process all filings in the DB (backward-compatible)
+        filing_metas = await store.list_filings()
 
     # Load full filings (with sections) for all metadata entries.
-    # Loaded lazily per-filing to avoid holding all HTML in memory at once.
     full_filings = {}
     for fm in filing_metas:
         try:
@@ -183,6 +219,9 @@ async def run_analysis(store, config, ana_config):
                 full_filings[fm.accession_number] = filing
         except Exception as e:
             print(f"Warning: Could not load filing {fm.accession_number}: {e}", file=sys.stderr)
+
+    # Build list of filing IDs once for bulk existence queries
+    filing_ids = list(full_filings.keys())
 
     if ana_config.get("dictionary", True):
         from edgar_sentinel.analyzers.dictionary import DictionaryAnalyzer
@@ -196,25 +235,28 @@ async def run_analysis(store, config, ana_config):
             dict_cfg = DictionaryAnalyzerConfig(**dict_cfg_dict)
             analyzer = DictionaryAnalyzer(dict_cfg)
 
+            # One bulk query instead of one query per (filing, section)
+            existing_sent_keys = await store.get_existing_sentiment_keys(filing_ids)
+
+            new_sent_results = []
             for acc_num, filing in full_filings.items():
-                # filing.sections is dict[SectionName, FilingSection]
                 for section in filing.sections.values():
                     try:
-                        existing = await store.get_sentiments(
-                            acc_num,
-                            section_name=section.section_name,
-                            analyzer_name="dictionary"
-                        )
-                        if existing:
+                        key = (acc_num, section.section_name, "dictionary")
+                        if key in existing_sent_keys:
                             cached_sentiment += 1
                             continue
 
                         result = analyzer.analyze(section)
                         if result:
-                            await store.save_sentiment(result)
+                            new_sent_results.append(result)
+                            existing_sent_keys.add(key)
                             new_sentiment += 1
                     except Exception as e:
                         print(f"Warning: Dict analysis failed: {e}", file=sys.stderr)
+
+            # Single bulk commit for all new sentiment results
+            await store.save_sentiments_batch(new_sent_results)
         except Exception as e:
             print(f"Warning: Dictionary analyzer init failed: {e}", file=sys.stderr)
 
@@ -225,6 +267,9 @@ async def run_analysis(store, config, ana_config):
             sim_cfg = SimilarityAnalyzerConfig(enabled=True)
             sim_analyzer = SimilarityAnalyzer(sim_cfg)
 
+            # One bulk query instead of one query per (filing, section)
+            existing_sim_keys = await store.get_existing_similarity_keys(filing_ids)
+
             # Group full filings by ticker and form type for sequential comparison
             from collections import defaultdict
             grouped = defaultdict(list)
@@ -232,6 +277,7 @@ async def run_analysis(store, config, ana_config):
                 key = (filing.metadata.ticker, filing.metadata.form_type)
                 grouped[key].append(filing)
 
+            new_sim_results = []
             for key, group in grouped.items():
                 group.sort(key=lambda f: str(f.metadata.filed_date))
                 for i in range(1, len(group)):
@@ -241,19 +287,20 @@ async def run_analysis(store, config, ana_config):
                         prior_section = prior.sections.get(section.section_name)
                         if prior_section:
                             try:
-                                existing = await store.get_similarity(
-                                    current.metadata.accession_number,
-                                    section_name=section.section_name
-                                )
-                                if existing:
+                                sim_key = (current.metadata.accession_number, section.section_name)
+                                if sim_key in existing_sim_keys:
                                     cached_similarity += 1
                                     continue
                                 result = sim_analyzer.analyze(section, prior_section)
                                 if result:
-                                    await store.save_similarity(result)
+                                    new_sim_results.append(result)
+                                    existing_sim_keys.add(sim_key)
                                     new_similarity += 1
                             except Exception as e:
                                 print(f"Warning: Similarity analysis failed: {e}", file=sys.stderr)
+
+            # Single bulk commit for all new similarity results
+            await store.save_similarities_batch(new_sim_results)
         except Exception as e:
             print(f"Warning: Similarity analyzer init failed: {e}", file=sys.stderr)
 
